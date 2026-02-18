@@ -39,6 +39,8 @@ router.post('/', async (req, res) => {
   }
 });
 
+
+/////////
 // ============= READ ALL =============
 // GET /api/items - Get all items
 router.get('/', async (req, res) => {
