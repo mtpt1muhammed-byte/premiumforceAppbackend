@@ -11,7 +11,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
   try {
     const { username, email, countryCode, phoneNumber, lat, long, specialId, role } = req.body;
 
-    // Validation
+    // Validation........
     if (!username || !countryCode || !phoneNumber) {
       // If file was uploaded but validation fails, delete it from S3
       if (req.file) {
