@@ -142,7 +142,7 @@ router.delete('/:id', async (req, res) => {
       message: 'Item deleted successfully' 
     });
   } catch (error) {
-    console.error('Delete error:', error);
+  -  console.error('Delete error:', error);
     if (error.name === 'CastError') {
       return res.status(400).json({ message: 'Invalid item ID format' });
     }

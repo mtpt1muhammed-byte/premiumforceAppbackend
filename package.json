@@ -15,9 +15,14 @@
     "nodemon": "^3.1.11"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.993.0",
+    "@aws-sdk/lib-storage": "^3.993.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "mongoose": "^9.2.1"
+    "mongoose": "^9.2.1",
+    "multer": "^2.0.2",
+    "multer-s3": "^3.0.1"
   }
 }
+
