@@ -4,7 +4,7 @@ const Item = require('../models/item_model');
 
 const router = express.Router();
 
-// ============= CREATE =============
+//======= CREATE =====
 // POST /api/items - Create a new item
 router.post('/', async (req, res) => {
   try {
