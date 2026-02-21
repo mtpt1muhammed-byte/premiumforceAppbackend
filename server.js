@@ -27,6 +27,7 @@ const cors = require('cors');
 
 const itemRoutes = require('./routes/itemRoutes');
 const userRoutes = require('./routes/userRoutes');
+const otpRoutes = require('./routes/otpRoutes');
 
 
 
@@ -60,6 +61,10 @@ mongoose.connect(process.env.MONGODB_URI)
 // Routes
 app.use('/api/items', itemRoutes);
 app.use('/api/users', userRoutes);
+
+
+app.use('/api/otp', otpRoutes);
+
 
 // Root route
 app.get('/', (req, res) => {

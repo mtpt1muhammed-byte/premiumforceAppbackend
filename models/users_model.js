@@ -35,9 +35,9 @@ const userSchema = new mongoose.Schema({
     unique: true,
     validate: {
       validator: function(v) {
-        return /^[0-9]{10,15}$/.test(v);
+        return /^[0-9]{5,15}$/.test(v);
       },
-      message: 'Phone number must contain 10-15 digits'
+      message: 'Phone number must contain 5-15 digits'
     }
   },
   profileImage: {
@@ -76,8 +76,8 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['user', 'admin', 'moderator'],
-    default: 'user'
+    enum: ['customer', 'admin', 'driver'],
+    default: 'customer'
   },
   isActive: {
     type: Boolean,
