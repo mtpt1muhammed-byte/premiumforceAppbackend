@@ -2,6 +2,7 @@
 const jwt = require('jsonwebtoken');
 
 class JWTService {
+    
   generateTokens(user) {
     const payload = {
       userId: user._id,

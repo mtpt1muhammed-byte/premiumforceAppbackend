@@ -46,3 +46,5 @@ otpSchema.index({ phoneNumber: 1, countryCode: 1, purpose: 1 });
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.model('OTP', otpSchema);
+
+

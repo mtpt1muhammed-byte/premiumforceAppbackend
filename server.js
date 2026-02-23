@@ -41,6 +41,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const crypto = require('crypto');
+const refreshSecret = crypto.randomBytes(64).toString('hex');
+console.log(refreshSecret);
 
 
 // Log to verify environment variables are loaded (remove in production)
