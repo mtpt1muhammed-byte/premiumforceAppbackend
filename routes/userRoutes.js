@@ -1,7 +1,7 @@
 // routes/users.js
 const express = require('express');
 const User = require('../models/users_model');
-const { verifyOTP } = require('../middleware/otpMiddleware');
+const { verifyOTP } = require('../middleware/otpMideWare');
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 
 const router = express.Router();
