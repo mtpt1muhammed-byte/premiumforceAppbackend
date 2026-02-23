@@ -9,6 +9,7 @@ const {
 } = require('../controller/otpController');
 const authMiddleware = require('../middleware/auth');
 
+
 // Public routes
 router.post('/send-otp', sendOTP);
 router.post('/resend-otp', resendOTP);
