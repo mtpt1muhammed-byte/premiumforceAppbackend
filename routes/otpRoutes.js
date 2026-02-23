@@ -7,9 +7,10 @@ const {
   refreshToken,
   logout 
 } = require('../controller/otpController');
-const authMiddleware = require('../middleware/auth');
 
+const authMiddleware = require('../middleware/authTheMiddle');
 
+//
 // Public routes
 router.post('/send-otp', sendOTP);
 router.post('/resend-otp', resendOTP);
