@@ -4,6 +4,9 @@ const User = require('../models/users_model');
 const { verifyOTP } = require('../middleware/otpMideWare');
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 
+
+const jwt = require('jsonwebtoken');
+
 const router = express.Router();
 
 
@@ -67,6 +70,128 @@ router.patch('/:id/phone', verifyOTP, upload.none(), async (req, res) => {
 
 // ============= CREATE with Profile Image =============
 // POST /api/users - Create a new user with profile image
+// router.post('/', upload.single('profileImage'), async (req, res) => {
+//   try {
+//     const { username, email, countryCode, phoneNumber, lat, long, specialId, role } = req.body;
+
+//     // Validation........
+//     if (!username || !countryCode || !phoneNumber) {
+//       // If file was uploaded but validation fails, delete it from S3
+//       if (req.file) {
+//         await deleteFromS3(req.file.key);
+//       }
+//       return res.status(400).json({ 
+//         message: 'Please provide username, countryCode and phoneNumber' 
+//       });
+//     }
+
+//     // Check if user already exists
+//     const existingUser = await User.findOne({ 
+//       $or: [
+//         { username },
+//         { phoneNumber },
+//         { email: email || '' }
+//       ]
+//     });
+
+//     if (existingUser) {
+//       if (req.file) {
+//         await deleteFromS3(req.file.key);
+//       }
+//       return res.status(400).json({ 
+//         message: 'User with this username, email or phone number already exists' 
+//       });
+//     }
+
+//     // Check if profile image was uploaded
+//     if (!req.file) {
+//       return res.status(400).json({ 
+//         message: 'Profile image is required' 
+//       });
+//     }
+
+//     // Create new user with profile image data
+//     const newUser = new User({
+//       username,
+//       email: email || undefined,
+//       countryCode,
+//       phoneNumber,
+//       profileImage: {
+//         key: req.file.key,
+//         url: getS3Url(req.file.key),
+//         originalName: req.file.originalname,
+//         mimeType: req.file.mimetype,
+//         size: req.file.size
+//       },
+//       location: {
+//         lat: lat ? parseFloat(lat) : undefined,
+//         long: long ? parseFloat(long) : undefined
+//       },
+//       specialId: specialId || undefined,
+//       role: role || 'user'
+//     });
+
+//     const savedUser = await newUser.save();
+
+//     res.status(201).json({
+//       success: true,
+//       message: 'User created successfully',
+//       data: savedUser
+//     });
+//   } catch (error) {
+//     // If error occurs and file was uploaded, delete it from S3
+//     if (req.file) {
+//       await deleteFromS3(req.file.key).catch(err => 
+//         console.error('Error deleting file after failed user creation:', err)
+//       );
+//     }
+
+//     console.error('Create user error:', error);
+    
+//     // Handle duplicate key error
+//     if (error.code === 11000) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Duplicate field value entered' 
+//       });
+//     }
+
+//     res.status(500).json({ 
+//       success: false,
+//       message: 'Error creating user', 
+//       error: error.message 
+//     });
+//   }
+// });
+
+
+
+
+
+
+
+
+const generateAccessToken = (user) => {
+  return jwt.sign(
+    { 
+      userId: user._id, 
+      username: user.username,
+      role: user.role 
+    },
+    process.env.JWT_ACCESS_SECRET,
+    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' } // 15 minutes default
+  );
+};
+
+// Generate refresh token (long-lived)
+const generateRefreshToken = (user) => {
+  return jwt.sign(
+    { userId: user._id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' } // 7 days default
+  );
+};
+
 router.post('/', upload.single('profileImage'), async (req, res) => {
   try {
     const { username, email, countryCode, phoneNumber, lat, long, specialId, role } = req.body;
@@ -78,6 +203,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
         await deleteFromS3(req.file.key);
       }
       return res.status(400).json({ 
+        success: false,
         message: 'Please provide username, countryCode and phoneNumber' 
       });
     }
@@ -96,6 +222,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
         await deleteFromS3(req.file.key);
       }
       return res.status(400).json({ 
+        success: false,
         message: 'User with this username, email or phone number already exists' 
       });
     }
@@ -103,6 +230,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
     // Check if profile image was uploaded
     if (!req.file) {
       return res.status(400).json({ 
+        success: false,
         message: 'Profile image is required' 
       });
     }
@@ -130,10 +258,31 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
 
     const savedUser = await newUser.save();
 
+    // Generate tokens
+    const accessToken = generateAccessToken(savedUser);
+    const refreshToken = generateRefreshToken(savedUser);
+
+    // Save refresh token to user (optional - if you want to store in database)
+    savedUser.refreshToken = refreshToken;
+    await savedUser.save();
+
+    // Remove sensitive data from response
+    const userResponse = savedUser.toObject();
+    delete userResponse.refreshToken; // if you stored it
+    delete userResponse.__v;
+
     res.status(201).json({
       success: true,
       message: 'User created successfully',
-      data: savedUser
+      data: {
+        user: userResponse,
+        tokens: {
+          accessToken,
+          refreshToken,
+          tokenType: 'Bearer',
+          expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+        }
+      }
     });
   } catch (error) {
     // If error occurs and file was uploaded, delete it from S3
@@ -160,6 +309,8 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
     });
   }
 });
+
+
 
 // ============= GET ALL USERS =============
 // GET /api/users - Get all users with filtering and sorting
