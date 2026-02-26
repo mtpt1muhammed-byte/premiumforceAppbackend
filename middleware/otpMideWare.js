@@ -47,3 +47,12 @@ const verifyOTP = async (req, res, next) => {
 };
 
 module.exports = { verifyOTP };
+
+
+
+
+
+
+
+
+

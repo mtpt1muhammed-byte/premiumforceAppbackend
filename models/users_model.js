@@ -96,7 +96,7 @@ const userSchema = new mongoose.Schema({
 });
 
 // Compound index for phoneNumber and countryCode for faster queries
-userSchema.index({ phoneNumber: 1, countryCode: 1 });
+// userSchema.index({ phoneNumber: 1, countryCode: 1 });
 
 // Virtual for full phone number with country code
 userSchema.virtual('fullPhoneNumber').get(function() {

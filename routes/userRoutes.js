@@ -634,6 +634,48 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+// Add this temporary route to create the missing admin
+router.post('/create-missing-admin', async (req, res) => {
+  try {
+    const missingUserId = "699dda745f83dd112f637b11";
+    
+    // Check if it exists first
+    const exists = await Admin.findById(missingUserId);
+    if (exists) {
+      return res.json({ message: 'User already exists' });
+    }
+    
+    // Create the user with the specific ID
+    const newAdmin = new Admin({
+      _id: missingUserId, // Use the specific ID
+      phoneNumber: "9746790897",
+      countryCode: "+91",
+      role: "admin",
+      name: "Admin User",
+      email: "admin@example.com",
+      password: "hashed_password_here", // You need to hash this
+      isActive: true
+    });
+    
+    await newAdmin.save();
+    
+    res.json({
+      success: true,
+      message: 'Missing admin created',
+      admin: newAdmin
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 // ============= UPDATE PROFILE IMAGE ONLY =============
 // PATCH /api/users/:id/profile-image - Update only profile image
 router.patch('/:id/profile-image', upload.single('profileImage'), async (req, res) => {

@@ -75,10 +75,17 @@ const bookingSchema = new mongoose.Schema({
     size: Number,
     duration: Number // optional: audio duration in seconds
   },
-  passengerCount: {
-    type: Number,
-    required: true,
-    min: 1
+  bookingStatus: {
+    type: String,
+    required: false, 
+  },
+    timeLine: [{
+    type: String,
+    required: false
+  }],
+  passengerMobile: {
+    type: String,
+    required: true
   },
   passengerNames: [{
     type: String,

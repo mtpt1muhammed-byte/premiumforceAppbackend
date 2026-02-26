@@ -10,6 +10,7 @@ const {
 
 const authMiddleware = require('../middleware/authTheMiddle');
 
+
 //
 // Public routes
 router.post('/send-otp', sendOTP);

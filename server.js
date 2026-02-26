@@ -21,6 +21,7 @@ console.log('✓ AWS_ACCESS_KEY_ID exists:', !!process.env.AWS_ACCESS_KEY_ID);
 
 
 
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -29,8 +30,8 @@ const itemRoutes = require('./routes/itemRoutes');
 const userRoutes = require('./routes/userRoutes');
 const otpRoutes = require('./routes/otpRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
-
-
+const driverRoutes = require('./routes/driverRoutes');
+const assignDriverCar =require('./routes/assign_admin_driver_Routes');
 
 dotenv.config();
 
@@ -67,6 +68,12 @@ app.use('/api/items', itemRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/otp', otpRoutes);
 app.use('/api/bookings', bookingRoutes);
+
+// Routes
+app.use('/api/drivers', driverRoutes);
+
+// Routes
+app.use('/api/admin', assignDriverCar);
 
 // Root route
 app.get('/', (req, res) => {
