@@ -13,6 +13,7 @@ const s3Client = new S3Client({
   }
 });
 
+
 // Allowed file types
 const allowedFileTypes = /jpeg|jpg|png|gif|webp/;
 
@@ -24,23 +25,25 @@ const generateFileName = (originalname) => {
   return `cars/${timestamp}-${randomString}${extension}`;
 };
 
+
 // Configure multer for S3 upload
 const upload = multer({
   storage: multerS3({
     s3: s3Client,
     bucket: process.env.AWS_S3_BUCKET_NAME,
-    acl: 'public-read',
+    // acl: 'public-read',
     contentType: multerS3.AUTO_CONTENT_TYPE,
     key: function (req, file, cb) {
       const fileName = generateFileName(file.originalname);
       cb(null, fileName);
     },
+    
     metadata: function (req, file, cb) {
       cb(null, {
         fieldName: file.fieldname,
         originalName: file.originalname,
         mimeType: file.mimetype,
-        uploadedBy: req.user ? req.user._id.toString() : 'unknown',
+        uploadedBy: req.user ? req.user.userId.toString() : 'unknown',
         uploadDate: new Date().toISOString()
       });
     }

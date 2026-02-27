@@ -3,7 +3,8 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Car = require('../models/car_model');
 const authMiddleware = require('../middleware/authTheMiddle');
-const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
+const { upload, deleteFromS3, getS3Url } = require('../config/car_s3');
+
 
 // Admin middleware to check if user is admin
 const adminMiddleware = async (req, res, next) => {
@@ -59,6 +60,42 @@ router.post('/',
           success: false,
           message: 'Number of passengers must be a valid positive number'
         });
+      }
+
+      // CHECK IF CAR ALREADY EXISTS WITH SAME NAME AND MODEL
+      const existingCar = await Car.findOne({
+        carName: { $regex: new RegExp(`^${carName.trim()}$`, 'i') }, // Case-insensitive match
+        model: { $regex: new RegExp(`^${model.trim()}$`, 'i') } // Case-insensitive match
+      });
+
+      if (existingCar) {
+        // Delete uploaded file since car already exists
+        if (req.file) {
+          await deleteFromS3(req.file.key);
+        }
+        
+        return res.status(409).json({ // 409 Conflict status code
+          success: false,
+          message: 'Car with this name and model already exists',
+          existingCar: {
+            carId: existingCar.carId,
+            carName: existingCar.carName,
+            brand: existingCar.brand,
+            model: existingCar.model,
+            numberOfPassengers: existingCar.numberOfPassengers
+          }
+        });
+      }
+
+      // Optional: Check if same car name exists with different model (warning)
+      const sameNameDifferentModel = await Car.findOne({
+        carName: { $regex: new RegExp(`^${carName.trim()}$`, 'i') },
+        model: { $ne: model }
+      });
+
+      if (sameNameDifferentModel) {
+        console.log(`Warning: Car with name "${carName}" exists with different model: ${sameNameDifferentModel.model}`);
+        // You can still proceed with creation, just logging a warning
       }
 
       // Create car object
@@ -294,6 +331,55 @@ router.put('/:id',
         }
       }
 
+      // CHECK IF ANOTHER CAR ALREADY EXISTS WITH SAME NAME AND MODEL (excluding current car)
+      if (carName || model) {
+        const searchCriteria = {};
+        
+        // Only check if both carName and model are being updated or provided
+        const newCarName = carName ? String(carName).trim() : car.carName;
+        const newModel = model ? String(model).trim() : car.model;
+        
+        // Find any other car with the same carName and model combination
+        const existingCar = await Car.findOne({
+          _id: { $ne: id }, // Exclude current car
+          carName: { $regex: new RegExp(`^${newCarName}$`, 'i') },
+          model: { $regex: new RegExp(`^${newModel}$`, 'i') }
+        });
+
+        if (existingCar) {
+          // Delete uploaded file if car already exists
+          if (req.file) {
+            await deleteFromS3(req.file.key);
+          }
+          
+          return res.status(409).json({
+            success: false,
+            message: 'Another car with this name and model already exists',
+            existingCar: {
+              carId: existingCar.carId,
+              carName: existingCar.carName,
+              brand: existingCar.brand,
+              model: existingCar.model,
+              numberOfPassengers: existingCar.numberOfPassengers
+            }
+          });
+        }
+
+        // Optional: Check if same car name exists with different model (warning)
+        if (carName && model) {
+          const sameNameDifferentModel = await Car.findOne({
+            _id: { $ne: id },
+            carName: { $regex: new RegExp(`^${newCarName}$`, 'i') },
+            model: { $ne: newModel }
+          });
+
+          if (sameNameDifferentModel) {
+            console.log(`Warning: Another car with name "${newCarName}" exists with different model: ${sameNameDifferentModel.model}`);
+            // You can still proceed with update, just logging a warning
+          }
+        }
+      }
+
       // Update fields if provided
       if (carName) car.carName = String(carName).trim();
       if (brand) car.brand = String(brand).trim();
@@ -302,12 +388,8 @@ router.put('/:id',
 
       // Handle image update if new image is uploaded
       if (req.file) {
-        // Delete old image from S3
-        if (car.carImage?.key) {
-          await deleteFromS3(car.carImage.key).catch(err => 
-            console.error('Error deleting old car image:', err)
-          );
-        }
+        // Store old image key for deletion after successful update
+        const oldImageKey = car.carImage?.key;
 
         // Set new image
         car.carImage = {
@@ -317,9 +399,20 @@ router.put('/:id',
           mimeType: req.file.mimetype,
           size: req.file.size
         };
-      }
 
-      await car.save();
+        // Save the car first
+        await car.save();
+
+        // Delete old image from S3 only after successful save
+        if (oldImageKey) {
+          await deleteFromS3(oldImageKey).catch(err => 
+            console.error('Error deleting old car image:', err)
+          );
+        }
+      } else {
+        // Just save without image update
+        await car.save();
+      }
 
       res.json({
         success: true,
@@ -350,6 +443,21 @@ router.put('/:id',
           success: false,
           message: 'Validation error',
           errors: errors
+        });
+      }
+
+      // Handle duplicate key error from compound index
+      if (error.code === 11000) {
+        // Check which fields caused the duplicate
+        if (error.keyPattern && error.keyPattern.carName && error.keyPattern.model) {
+          return res.status(409).json({
+            success: false,
+            message: `Another car with name "${req.body.carName || car.carName}" and model "${req.body.model || car.model}" already exists`
+          });
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Duplicate field value entered'
         });
       }
 

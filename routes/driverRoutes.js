@@ -25,7 +25,7 @@ const generateAccessToken = (driver) => {
       role: 'driver'
     },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' }
+    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d' }
   );
 };
 
@@ -36,6 +36,7 @@ const generateRefreshToken = (driver) => {
     { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' }
   );
 };
+
 
 // ============= OTP ROUTES =============
 
