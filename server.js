@@ -33,6 +33,10 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const driverRoutes = require('./routes/driverRoutes');
 const assignDriverCar =require('./routes/assign_admin_driver_Routes');
 
+// Import car routes
+const carRoutes = require('./routes/carRoutes');
+
+
 dotenv.config();
 
 const app = express();
@@ -74,6 +78,11 @@ app.use('/api/drivers', driverRoutes);
 
 // Routes
 app.use('/api/admin', assignDriverCar);
+
+
+
+// Use car routes
+app.use('/api/cars', carRoutes);
 
 // Root route
 app.get('/', (req, res) => {

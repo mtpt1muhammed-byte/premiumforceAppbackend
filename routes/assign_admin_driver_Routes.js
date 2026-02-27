@@ -4,13 +4,20 @@ const router = express.Router();
 const AdminAssignDriver = require('../models/assign_admin_driver_model');
 const Driver = require('../models/driver_model');
 const Admin = require('../models/users_model');
-const { authenticate, requireAdmin } = require('../middleware/adminmiddleware');
+const {   authenticateToken,
+  authorizeAdmin,
+  authorizeRoles,
+  authorizeAny,
+  // New refresh token functions
+  generateRefreshToken,
+  authenticateRefreshToken,
+  refreshAccessToken, } = require('../middleware/adminmiddleware');
 
 // @desc    Assign a driver to admin
 // @route   POST /api/admin/assign-driver
 // @access  Private (Admin only)
 
-router.post('/assign-driver', authenticate,requireAdmin, async (req, res) => {
+router.post('/assign-driver', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     console.log('========== ASSIGN DRIVER DEBUG ==========');
     console.log('1. Request body:', req.body);
@@ -21,18 +28,18 @@ router.post('/assign-driver', authenticate,requireAdmin, async (req, res) => {
     const { driverID } = req.body;
     
     // Check if admin exists in request
-    if (!req.admin) {
-      console.log('5. ERROR: req.admin is undefined!');
+    if (!req.user.userId) {
+      console.log('5. ERROR: req.user is undefined or missing userId!');
       return res.status(401).json({
         success: false,
         message: 'Authentication failed - admin not found in request'
       });
     }
 
-    console.log('6. Admin ID from token:', req.admin.id);
-    console.log('7. Admin full object:', JSON.stringify(req.admin, null, 2));
+    console.log('6. Admin ID from token:', req.user.userId);
+    console.log('7. Admin full object:', JSON.stringify(req.user, null, 2));
 
-    const adminID = req.admin.id || req.admin._id; // Try both id and _id
+    const adminID = req.user.userId; // Use the ID from the user object
 
     // Validate required fields
     if (!driverID) {
@@ -112,7 +119,7 @@ router.post('/assign-driver', authenticate,requireAdmin, async (req, res) => {
 // @desc    Get all assignments for an admin
 // @route   GET /api/admin/assignments
 // @access  Private (Admin only)
-router.get('/assignments', authenticate, requireAdmin, async (req, res) => {
+router.get('/assignments', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const adminID = req.admin._id;
     const { status, page = 1, limit = 10 } = req.query;
@@ -153,7 +160,7 @@ router.get('/assignments', authenticate, requireAdmin, async (req, res) => {
 // @desc    Update assignment status
 // @route   PUT /api/admin/assignments/:id
 // @access  Private (Admin only)
-router.put('/assignments/:id', authenticate, requireAdmin, async (req, res) => {
+router.put('/assignments/:id',authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
@@ -201,7 +208,7 @@ router.put('/assignments/:id', authenticate, requireAdmin, async (req, res) => {
 // @desc    Unassign/remove driver
 // @route   DELETE /api/admin/assignments/:id
 // @access  Private (Admin only)
-router.delete('/assignments/:id', authenticate, requireAdmin, async (req, res) => {
+router.delete('/assignments/:id',authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const adminID = req.admin._id;
@@ -236,7 +243,7 @@ router.delete('/assignments/:id', authenticate, requireAdmin, async (req, res) =
 // @desc    Get all unassigned drivers (available for assignment)
 // @route   GET /api/admin/available-drivers
 // @access  Private (Admin only)
-router.get('/available-drivers', authenticate, requireAdmin, async (req, res) => {
+router.get('/available-drivers', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     // Find all drivers that are not actively assigned
     const activeAssignments = await AdminAssignDriver.find({ 
