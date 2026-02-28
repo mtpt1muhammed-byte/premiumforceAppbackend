@@ -179,7 +179,7 @@ const generateAccessToken = (user) => {
       role: user.role 
     },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' } // 15 minutes default
+    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d' } // 1 day default
   );
 };
 
@@ -280,7 +280,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
           accessToken,
           refreshToken,
           tokenType: 'Bearer',
-          expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+          expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d'
         }
       }
     });

@@ -12,7 +12,7 @@ const generateTokens = (driver) => {
       type: 'driver'
     },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' }
+    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d' }
   );
 
   const refreshToken = jwt.sign(

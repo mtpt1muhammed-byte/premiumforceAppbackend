@@ -1,8 +1,7 @@
 const mongoose = require('mongoose');
 
 const carSchema = new mongoose.Schema({
-
-  carName: {
+ carName: {
     type: String,
     required: [true, 'Car name is required'],
     trim: true,
@@ -13,6 +12,18 @@ const carSchema = new mongoose.Schema({
     required: [true, 'Brand is required'],
     trim: true,
     maxlength: [50, 'Brand cannot exceed 50 characters']
+  },
+  minCharge: {
+    type: String,
+    required: [true, 'Minimum charge is required'],
+    trim: true,
+    maxlength: [100, 'Minimum charge cannot exceed 100 characters']
+  },
+  minimumChargeDistance: {
+    type: String,
+    required: [true, 'Minimum charge distance is required'],
+    trim: true,
+    maxlength: [50, 'Minimum charge distance cannot exceed 50 characters']
   },
   model: {
     type: String,

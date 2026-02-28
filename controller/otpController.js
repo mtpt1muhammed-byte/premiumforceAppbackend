@@ -20,7 +20,7 @@ const generateTokens = (user) => {
       role: user.role 
     },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '1d' }
   );
 
   
@@ -251,7 +251,7 @@ const refreshToken = async (req, res) => {
         role: user.role 
       },
       process.env.JWT_ACCESS_SECRET,
-      { expiresIn: '15m' }
+      { expiresIn: '1d' }
     );
     
     const newRefreshToken = jwt.sign(

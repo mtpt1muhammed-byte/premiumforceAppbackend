@@ -256,7 +256,7 @@ router.post('/verify-otp', async (req, res) => {
       accessToken,
       refreshToken,
       tokenType: 'Bearer',
-      expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m',
+      expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d',
       driver: driver.getPublicProfile(),
       isNewDriver
     };

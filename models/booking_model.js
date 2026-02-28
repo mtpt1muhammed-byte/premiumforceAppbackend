@@ -57,6 +57,14 @@ const bookingSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+   carName: {
+    type: String,
+    required: true
+  },
+  charge: {
+    type: String,
+    required: true
+  },
   carimage: {
     key: String,
     url: String,

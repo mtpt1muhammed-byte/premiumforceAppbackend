@@ -30,11 +30,12 @@ router.post('/',
       console.log('Request file:', req.file);
 
       const {
-        carName, brand, model, numberOfPassengers
+        carName, brand, model, numberOfPassengers,
+        minimumChargeDistance, minCharge
       } = req.body;
 
       // Validation for required fields
-      if (!carName || !brand || !model || !numberOfPassengers) {
+      if (!carName || !brand || !model || !numberOfPassengers || !minimumChargeDistance || !minCharge) {
         if (req.file) {
           await deleteFromS3(req.file.key);
         }
@@ -82,7 +83,9 @@ router.post('/',
             carName: existingCar.carName,
             brand: existingCar.brand,
             model: existingCar.model,
-            numberOfPassengers: existingCar.numberOfPassengers
+            numberOfPassengers: existingCar.numberOfPassengers,
+            minCharge: existingCar.minCharge,
+            minimumChargeDistance: existingCar.minimumChargeDistance
           }
         });
       }
@@ -104,6 +107,8 @@ router.post('/',
         brand: String(brand).trim(),
         model: String(model).trim(),
         numberOfPassengers: passengers,
+        minCharge: String(minCharge).trim(),
+        minimumChargeDistance: String(minimumChargeDistance).trim(),
         carImage: {
           key: req.file.key,
           url: getS3Url(req.file.key),
@@ -301,7 +306,7 @@ router.put('/:id',
     try {
       const { id } = req.params;
       const {
-        carName, brand, model, numberOfPassengers
+        carName, brand, model, numberOfPassengers, minCharge, minimumChargeDistance
       } = req.body;
 
       // Find existing car
@@ -360,7 +365,9 @@ router.put('/:id',
               carName: existingCar.carName,
               brand: existingCar.brand,
               model: existingCar.model,
-              numberOfPassengers: existingCar.numberOfPassengers
+              numberOfPassengers: existingCar.numberOfPassengers,
+              minCharge: existingCar.minCharge,
+              minimumChargeDistance: existingCar.minimumChargeDistance
             }
           });
         }
@@ -385,6 +392,8 @@ router.put('/:id',
       if (brand) car.brand = String(brand).trim();
       if (model) car.model = String(model).trim();
       if (numberOfPassengers) car.numberOfPassengers = passengers;
+      if (minCharge) car.minCharge = String(minCharge).trim();
+      if (minimumChargeDistance) car.minimumChargeDistance = String(minimumChargeDistance).trim();
 
       // Handle image update if new image is uploaded
       if (req.file) {
@@ -467,6 +476,218 @@ router.put('/:id',
         error: error.message
       });
     }
+});
+
+
+// PATCH /api/cars/:id/min-charge - Update only the minimum charge
+router.patch('/:id/min-charge', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { minCharge } = req.body;
+
+    // Validate minCharge field
+    if (!minCharge) {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum charge is required'
+      });
+    }
+
+    // Validate minCharge format
+    if (typeof minCharge !== 'string' && typeof minCharge !== 'number') {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum charge must be a string or number'
+      });
+    }
+
+    // Convert to string if it's a number
+    const minChargeValue = typeof minCharge === 'number' ? minCharge.toString() : minCharge;
+
+    // Validate car ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid car ID format'
+      });
+    }
+
+    // Check if car exists
+    const existingCar = await Car.findById(id);
+    if (!existingCar) {
+      return res.status(404).json({
+        success: false,
+        message: 'Car not found'
+      });
+    }
+
+    // Check authorization (optional - based on your requirements)
+    if (existingCar.createdBy && existingCar.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to update this car'
+      });
+    }
+
+    // Update only the minCharge field
+    const updatedCar = await Car.findByIdAndUpdate(
+      id,
+      { 
+        minCharge: minChargeValue,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    ).select('-__v');
+
+    res.status(200).json({
+      success: true,
+      message: 'Minimum charge updated successfully',
+      data: {
+        _id: updatedCar._id,
+        carName: updatedCar.carName,
+        brand: updatedCar.brand,
+        model: updatedCar.model,
+        minCharge: updatedCar.minCharge,
+        previousMinCharge: existingCar.minCharge,
+        updatedAt: updatedCar.updatedAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Update minimum charge error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = {};
+      for (let field in error.errors) {
+        errors[field] = error.errors[field].message;
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: errors
+      });
+    }
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid car ID format'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Error updating minimum charge',
+      error: error.message
+    });
+  }
+});
+
+// ============= UPDATE MINIMUM CHARGE DISTANCE =============
+// PATCH /api/cars/:id/min-charge-distance - Update only the minimum charge distance
+router.patch('/:id/min-charge-distance', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { minimumChargeDistance } = req.body;
+
+    // Validate minimumChargeDistance field
+    if (!minimumChargeDistance) {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum charge distance is required'
+      });
+    }
+
+    // Validate minimumChargeDistance format
+    if (typeof minimumChargeDistance !== 'string' && typeof minimumChargeDistance !== 'number') {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum charge distance must be a string or number'
+      });
+    }
+
+    // Convert to string if it's a number
+    const minDistanceValue = typeof minimumChargeDistance === 'number' 
+      ? minimumChargeDistance.toString() 
+      : minimumChargeDistance;
+
+    // Validate car ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid car ID format'
+      });
+    }
+
+    // Check if car exists
+    const existingCar = await Car.findById(id);
+    if (!existingCar) {
+      return res.status(404).json({
+        success: false,
+        message: 'Car not found'
+      });
+    }
+
+    // Check authorization (optional - based on your requirements)
+    if (existingCar.createdBy && existingCar.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to update this car'
+      });
+    }
+
+    // Update only the minimumChargeDistance field
+    const updatedCar = await Car.findByIdAndUpdate(
+      id,
+      { 
+        minimumChargeDistance: minDistanceValue,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    ).select('-__v');
+
+    res.status(200).json({
+      success: true,
+      message: 'Minimum charge distance updated successfully',
+      data: {
+        _id: updatedCar._id,
+        carName: updatedCar.carName,
+        brand: updatedCar.brand,
+        model: updatedCar.model,
+        minimumChargeDistance: updatedCar.minimumChargeDistance,
+        previousMinimumChargeDistance: existingCar.minimumChargeDistance,
+        updatedAt: updatedCar.updatedAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Update minimum charge distance error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = {};
+      for (let field in error.errors) {
+        errors[field] = error.errors[field].message;
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: errors
+      });
+    }
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid car ID format'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Error updating minimum charge distance',
+      error: error.message
+    });
+  }
 });
 
 // ============= UPDATE CAR IMAGE ONLY =============
