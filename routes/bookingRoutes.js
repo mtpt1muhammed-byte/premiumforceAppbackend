@@ -4,10 +4,20 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const Booking = require('../models/booking_model');
+
+const User = require('../models/users_model');
 const authMiddleware = require('../middleware/authTheMiddle');
 
 // Import S3 configuration from your central config file (like in userRoutes)
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
+
+const NotificationService = require('../services/notificationService');
+
+
+const { notifyUser, notifyUsers } = require('../fcm');
+
+
+
 
 // ============= CREATE BOOKING with Images =============
 // POST /api/bookings - Create a new booking with car image and optional audio
@@ -19,6 +29,16 @@ router.post('/',
   ]), 
   async (req, res) => {
     try {
+
+
+
+
+
+
+  
+
+
+
       console.log('Request body:', req.body);
       console.log('Request files:', req.files);
 
@@ -30,6 +50,9 @@ router.post('/',
         passengerCount, passengerNames, passengerMobile, distance,
         customerID, bookingStatus,driverID
       } = req.body;
+
+
+     
 
       // Validation for required fields
       if (!category || !city || !arrival || !pickupLat || !pickupLong || 
@@ -101,6 +124,35 @@ router.post('/',
           if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
           if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
         }
+// NotificationService.asyncErrorHandler(existingBooking.driverID, {
+//       title: "New Booking Created",
+//       body: `A new booking has been created for ${existingBooking.carName}`,
+//       data: {
+//         booking_id: existingBooking._id,
+//         type: "new-booking"
+//       }
+//     });
+
+  console.log('Request body:',customerID);
+
+const userDetails = await User.findById(customerID).select('fcmToken').lean();
+
+
+   console.log(userDetails.fcmToken);
+   console.log(">>>>>>");
+   console.log(userDetails.fcmToken);
+  await notifyUser(
+        customerID,
+        '✅ Booking Confirmed',
+        `${carName} You already have a booking scheduled for this date`,
+        {
+          type: 'booking_created',
+          bookingId:existingBooking._id.toString(),
+          status: 'confirmed',
+          carName: carName
+        }
+      );
+
         return res.status(400).json({
           success: false,
           message: 'You already have a booking scheduled for this date',
@@ -183,6 +235,49 @@ router.post('/',
 
       const booking = new Booking(bookingData);
       await booking.save();
+
+
+
+// ============= SEND PUSH NOTIFICATIONS =============
+    //  await NotificationService.sendMultipleNotifications(tokens, {
+    //     "title": "Order Assigned to you", "body": "A New Order Assigned To you", 
+    //     "data": stringifyData({
+    //       order_id: orders.order_id,
+    //       type: "order-create"
+    //     }),
+
+    //   });
+
+
+    // NotificationService.asyncErrorHandler(booking.driverID, {
+    //   title: "New Booking Created",
+    //   body: `A new booking has been created for ${booking.carName}`,
+    //   data: {
+    //     booking_id: booking._id,
+    //     type: "new-booking"
+    //   }
+    // });
+
+
+
+
+     // Optional: Send notification to the customer that booking was created successfully
+      await notifyUser(
+        customerID,
+        '✅ Booking Confirmed',
+        `Your booking for ${carName} has been created successfully.`,
+        {
+          type: 'booking_created',
+          // bookingId: booking._id.toString(),
+          status: 'confirmed',
+          carName: carName
+        }
+      );
+
+      // ============= END PUSH NOTIFICATIONS =============
+
+
+
 
       res.status(201).json({
         success: true,
