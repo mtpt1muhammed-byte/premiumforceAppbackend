@@ -137,7 +137,6 @@ router.post('/',
 
 const userDetails = await User.findById(customerID).select('fcmToken').lean();
 
-
    console.log(userDetails.fcmToken);
    console.log(">>>>>>");
    console.log(userDetails.fcmToken);
