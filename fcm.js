@@ -149,11 +149,12 @@ async function sendPushNotification(fcmToken, title, body, data = {}) {
  */
 async function notifyUser(userId, title, body, data = {}) {
   const user = await User.findById(userId).select('fcmToken').lean();
-  if (!user?.fcmToken) return;
+//   if (!user?.fcmToken) return;
   await sendPushNotification(
-    user.fcmToken,
+    "c5ofSa45S5uFFbvIgeiFH_:APA91bHcvzs5aAQjYfcsXdoxSEXPie-iy6c5CSlL_pdyiCKy-mt-1BweWx1ktB68YSeD9vnSVFOhaEaOIP1-lV7CGXEkWrQ5H8lFYG6xCAQR5LaWRA7GSdk",
     title, body, data);
 }
+
 
 /**
  * Send a notification to multiple users in parallel.
