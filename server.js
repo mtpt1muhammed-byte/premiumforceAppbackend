@@ -223,8 +223,9 @@ app.use('/api/cars', carRoutes);
 // ============================================
 
 // Google OAuth client setup
-const WEB_CLIENT_ID = process.env.GOOGLE_SINGIN_CLIENT_ID;
+const WEB_CLIENT_ID = process.env.GOOGLE_WEB_CLIENT_ID;
 const client = new OAuth2Client(WEB_CLIENT_ID);
+
 
 // JWT Configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
@@ -241,7 +242,7 @@ const generateTokens = (user) => {
     name: user.name,
     picture: user.picture,
     provider: user.provider || 'google',
-    role: user.role || 'user'
+    role: user.role || 'customer'
   };
 
   // Refresh token payload (minimal info)
