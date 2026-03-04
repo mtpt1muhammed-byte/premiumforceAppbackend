@@ -20,6 +20,9 @@ console.log('✓ AWS_S3_BUCKET_NAME:', process.env.AWS_S3_BUCKET_NAME);
 console.log('✓ AWS_ACCESS_KEY_ID exists:', !!process.env.AWS_ACCESS_KEY_ID);
 
 
+const jwt = require('jsonwebtoken');
+
+const crypto = require('crypto');
 
 
 const express = require('express');
@@ -39,10 +42,13 @@ const router = express.Router();
 // Import car routes
 const carRoutes = require('./routes/carRoutes');
 
+
+const { OAuth2Client } = require('google-auth-library');
+
 // const UserToken = require('./models/userToken'); 
 
 // const tokenRoutes = require('./routes/tokenRoutes');
-
+const User = require('./models/users_model');
 
 
 dotenv.config();
@@ -55,9 +61,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const crypto = require('crypto');
-const refreshSecret = crypto.randomBytes(64).toString('hex');
-console.log(refreshSecret);
+// const crypto = require('crypto');
+// const refreshSecret = crypto.randomBytes(64).toString('hex');
+// console.log(refreshSecret);
 
 
 // Log to verify environment variables are loaded (remove in production)
@@ -151,6 +157,431 @@ app.use('/api/cars', carRoutes);
 
 
 
+//google sign in 
+
+// TODO: Replace with your actual Web Client ID from Google Cloud Console
+// const WEB_CLIENT_ID = process.env.GOOGLE_SINGIN_CLIENT_ID; // e.g., 'your-web-client-id.apps.googleusercontent.com'
+// const client = new OAuth2Client(WEB_CLIENT_ID);
+
+// app.post('/auth/google', async (req, res) => {
+//   const { idToken } = req.body; // The token sent from your Flutter app
+
+//   if (!idToken) {
+//     return res.status(400).json({ error: 'ID Token is required' });
+//   }
+
+//   try {
+//     // Verify the ID token
+//     const ticket = await client.verifyIdToken({
+//       idToken: idToken,
+//       audience: WEB_CLIENT_ID, // Specify the WEB_CLIENT_ID of your backend app
+//     });
+
+//     // If verification is successful, get the payload
+//     const payload = ticket.getPayload();
+    
+//     // The payload contains user information
+//     const userId = payload['sub']; // Google's unique ID for the user
+//     const userEmail = payload['email'];
+//     const userName = payload['name'];
+//     const userPicture = payload['picture'];
+
+//     console.log(`User verified: ${userId}, ${userEmail}`);
+
+//     // At this point, the user is authenticated.
+//     // You can now:
+//     // 1. Find or create the user in your database.
+//     // 2. Generate your own session token or JWT for future API requests.
+//     // 3. Send this token back to the Flutter app.
+
+//     // Example: Send a success response
+//     res.status(200).json({
+//       message: 'Authentication successful',
+//       user: {
+//         id: userId,
+//         email: userEmail,
+//         name: userName,
+//         picture: userPicture,
+//       },
+//       // ... your app's session token
+//     });
+
+//   } catch (error) {
+//     // If verification fails, an error is thrown.
+//     console.error('Error verifying ID token:', error);
+    
+//     // A common error is "Invalid token signature", which can happen if the token is malformed, 
+//     // from the wrong client, or if the wrong audience is used [citation:4].
+//     res.status(401).json({ error: 'Invalid ID token' });
+//   }
+// });
+
+// google sign in
+
+// ============================================
+// GOOGLE SIGN-IN WITH JWT IMPLEMENTATION
+// ============================================
+
+// Google OAuth client setup
+const WEB_CLIENT_ID = process.env.GOOGLE_SINGIN_CLIENT_ID;
+const client = new OAuth2Client(WEB_CLIENT_ID);
+
+// JWT Configuration
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || crypto.randomBytes(64).toString('hex');
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '15m'; // Access token expiry (short-lived)
+const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '7d'; // Refresh token expiry
+
+// Helper function to generate tokens
+const generateTokens = (user) => {
+  // Access token payload
+  const accessPayload = {
+    userId: user._id || user.id,
+    email: user.email,
+    name: user.name,
+    picture: user.picture,
+    provider: user.provider || 'google',
+    role: user.role || 'user'
+  };
+
+  // Refresh token payload (minimal info)
+  const refreshPayload = {
+    userId: user._id || user.id,
+    tokenVersion: user.tokenVersion || 0
+  };
+
+  // Generate access token (short-lived)
+  const accessToken = jwt.sign(
+    accessPayload,
+    JWT_SECRET,
+    { 
+      expiresIn: JWT_EXPIRY,
+      issuer: 'your-app-name',
+      audience: 'your-app-client'
+    }
+  );
+
+  // Generate refresh token (long-lived)
+  const refreshToken = jwt.sign(
+    refreshPayload,
+    JWT_REFRESH_SECRET,
+    { expiresIn: JWT_REFRESH_EXPIRY }
+  );
+
+  return { accessToken, refreshToken };
+};
+
+// Helper function to find or create user from Google data
+const findOrCreateUserFromGoogle = async (googlePayload) => {
+  const { sub: googleId, email, name, picture, email_verified } = googlePayload;
+
+  try {
+    // Check if user exists by email or googleId
+    let user = await User.findOne({ 
+      $or: [
+        { email: email },
+        { googleId: googleId }
+      ]
+    });
+
+    if (user) {
+      // Update existing user with latest Google info
+      user.googleId = user.googleId || googleId;
+      user.name = user.name || name;
+      user.picture = user.picture || picture;
+      user.emailVerified = user.emailVerified || email_verified;
+      user.lastLogin = new Date();
+      user.provider = 'google';
+      
+      // Increment token version to invalidate old refresh tokens (optional security)
+      // user.tokenVersion = (user.tokenVersion || 0) + 1;
+      
+      await user.save();
+      console.log(`✅ Existing user updated: ${email}`);
+    } else {
+      // Create new user
+      user = new User({
+        googleId: googleId,
+        email: email,
+        name: name,
+        picture: picture,
+        emailVerified: email_verified,
+        provider: 'google',
+        role: 'user',
+        lastLogin: new Date(),
+        tokenVersion: 0
+      });
+      
+      await user.save();
+      console.log(`✅ New user created: ${email}`);
+    }
+
+    return user;
+  } catch (error) {
+    console.error('Error in findOrCreateUserFromGoogle:', error);
+    throw error;
+  }
+};
+
+// Middleware to verify JWT access token
+const authenticateJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader) {
+    return res.status(401).json({ error: 'No authorization header provided' });
+  }
+
+  const token = authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      issuer: 'your-app-name',
+      audience: 'your-app-client'
+    });
+    
+    // Attach user info to request object
+    req.user = decoded;
+    next();
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired' });
+    }
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+};
+
+// ============================================
+// GOOGLE SIGN-IN ENDPOINT
+// ============================================
+
+/**
+ * @route   POST /auth/google
+ * @desc    Authenticate user with Google ID token
+ * @access  Public
+ */
+app.post('/auth/google', async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'ID Token is required' 
+    });
+  }
+
+  try {
+    // Verify the Google ID token
+    const ticket = await client.verifyIdToken({
+      idToken: idToken,
+      audience: WEB_CLIENT_ID,
+    });
+
+    // Get Google user info
+    const googlePayload = ticket.getPayload();
+    
+    // Find or create user in database
+    const user = await findOrCreateUserFromGoogle(googlePayload);
+
+    // Generate JWT tokens
+    const { accessToken, refreshToken } = generateTokens(user);
+
+    // Prepare user response (exclude sensitive data)
+    const userResponse = {
+      id: user._id,
+      googleId: user.googleId,
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      role: user.role,
+      provider: user.provider,
+      emailVerified: user.emailVerified
+    };
+
+    // Send success response with tokens
+    res.status(200).json({
+      success: true,
+      message: 'Authentication successful',
+      user: userResponse,
+      tokens: {
+        accessToken,
+        refreshToken,
+        expiresIn: JWT_EXPIRY,
+        tokenType: 'Bearer'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Google sign-in error:', error);
+    
+    // Handle specific error types
+    if (error.message.includes('audience')) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid client ID configuration' 
+      });
+    }
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Google token expired' 
+      });
+    }
+    
+    res.status(401).json({ 
+      success: false,
+      error: 'Invalid ID token',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ============================================
+// REFRESH TOKEN ENDPOINT
+// ============================================
+
+/**
+ * @route   POST /auth/refresh-token
+ * @desc    Get new access token using refresh token
+ * @access  Public
+ */
+app.post('/auth/refresh-token', async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'Refresh token is required' 
+    });
+  }
+
+  try {
+    // Verify refresh token
+    const decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+
+    // Find user by ID from refresh token
+    const user = await User.findById(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
+
+    // Optional: Check token version to invalidate old refresh tokens
+    if (user.tokenVersion !== decoded.tokenVersion) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Refresh token has been revoked' 
+      });
+    }
+
+    // Generate new tokens
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
+
+    res.status(200).json({
+      success: true,
+      message: 'Token refreshed successfully',
+      tokens: {
+        accessToken,
+        refreshToken: newRefreshToken, // Rotate refresh token
+        expiresIn: JWT_EXPIRY,
+        tokenType: 'Bearer'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Refresh token error:', error);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Refresh token expired' 
+      });
+    }
+    
+    res.status(401).json({ 
+      success: false,
+      error: 'Invalid refresh token' 
+    });
+  }
+});
+
+// ============================================
+// LOGOUT ENDPOINT
+// ============================================
+
+/**
+ * @route   POST /auth/logout
+ * @desc    Logout user (optional: increment token version)
+ * @access  Private
+ */
+app.post('/auth/logout', authenticateJWT, async (req, res) => {
+  try {
+    // Optional: Increment token version to invalidate all refresh tokens
+    // await User.findByIdAndUpdate(req.user.userId, { 
+    //   $inc: { tokenVersion: 1 } 
+    // });
+
+    res.status(200).json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('❌ Logout error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error during logout' 
+    });
+  }
+});
+
+// ============================================
+// GET CURRENT USER PROFILE
+// ============================================
+
+/**
+ * @route   GET /auth/me
+ * @desc    Get current authenticated user info
+ * @access  Private
+ */
+app.get('/auth/me', authenticateJWT, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password -__v');
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      user
+    });
+  } catch (error) {
+    console.error('❌ Get user error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Server error' 
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
 
 // Root route
 app.get('/', (req, res) => {
@@ -184,6 +615,7 @@ app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: 'Something went wrong!' });
 });
+
 
 // Start server
 app.listen(PORT, () => {

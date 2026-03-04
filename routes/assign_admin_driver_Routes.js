@@ -65,7 +65,7 @@ router.post('/assign-driver', authenticateToken, authorizeAdmin, async (req, res
     console.log('10. Checking existing assignments for driver:', driverID);
     const existingAssignment = await AdminAssignDriver.findOne({
       driverID,
-      status: 'active'
+      // status: 'active'
     });
     console.log('11. Existing assignment:', existingAssignment);
 

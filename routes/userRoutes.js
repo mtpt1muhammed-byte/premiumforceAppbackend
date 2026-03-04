@@ -259,6 +259,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
       $or: [
         { username },
         { phoneNumber },
+         { role : 'customer' }, // Prevent creating another admin
         { email: email || '' }
       ]
     });
@@ -269,7 +270,7 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
       }
       return res.status(400).json({ 
         success: false,
-        message: 'User with this username, email or phone number already exists' 
+        message: 'User with this username, email or phone number already exists.....' 
       });
     }
 

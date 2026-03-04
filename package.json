@@ -17,6 +17,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.993.0",
     "@aws-sdk/lib-storage": "^3.993.0",
+    "apple-sign-in-rest": "^1.0.3",
+    "apple-signin-auth": "^2.0.0",
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
