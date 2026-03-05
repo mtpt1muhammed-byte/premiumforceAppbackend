@@ -548,6 +548,71 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
 
 
 
+
+/**
+ * @route   GET /api/users/check-email
+ * @desc    Check if email exists and return user details if found
+ * @access  Public
+ */
+router.get('/check-email', async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    // Validate email
+    if (!email || email.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an email address'
+      });
+    }
+
+    // Clean and validate email format
+    const cleanEmail = email.trim().toLowerCase();
+    
+    // Basic email format validation
+    const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
+      });
+    }
+
+    // Check if email exists in database and get full user details
+    const existingUser = await User.findOne({ email: cleanEmail })
+      .select('-refreshToken -__v'); // Exclude sensitive fields
+
+    if (existingUser) {
+      // Email exists - return full user details
+      return res.status(200).json({
+        success: true,
+        exists: true,
+        message: 'Email found in database',
+        data: {
+          user: existingUser
+        }
+      });
+    }
+
+    // Email does not exist
+    return res.status(404).json({
+      success: false,
+      exists: false,
+      message: `User with email ${email} does not exist in our database`
+    });
+
+  } catch (error) {
+    console.error('Check email error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking email',
+      error: error.message
+    });
+  }
+});
+
+
+
 router.get('/', async (req, res) => {
   try {
     const { role, isActive, sort, page = 1, limit = 10 } = req.query;
