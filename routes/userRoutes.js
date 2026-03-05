@@ -238,13 +238,20 @@ const generateRefreshToken = (user) => {
   );
 };
 
+
+
+
+
+
+
 router.post('/', upload.single('profileImage'), async (req, res) => {
   try {
     const { username, email, countryCode, phoneNumber, lat, long, specialId, role } = req.body;
 
-    // Validation........
+    console.log('Create user request body:', req.file, req.body);
+    
+    // Validation
     if (!username || !countryCode || !phoneNumber) {
-      // If file was uploaded but validation fails, delete it from S3
       if (req.file) {
         await deleteFromS3(req.file.key);
       }
@@ -254,53 +261,68 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
       });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ 
-      $or: [
-        { username },
-        { phoneNumber },
-         { role : 'customer' }, // Prevent creating another admin
-        { email: email || '' }
-      ]
-    });
+    // Check for existing user by phone and email FIRST
+    const existingUserQuery = [
+      { phoneNumber }
+    ];
+    
+    if (email && email.trim() !== '') {
+      existingUserQuery.push({ email: email.trim().toLowerCase() });
+    }
+    
+    const existingUser = await User.findOne({ $or: existingUserQuery });
 
     if (existingUser) {
       if (req.file) {
         await deleteFromS3(req.file.key);
       }
+      
+      let duplicateField = 'phone number';
+      if (email && existingUser.email && 
+          existingUser.email.toLowerCase() === email.toLowerCase()) {
+        duplicateField = 'email';
+      }
+      
       return res.status(400).json({ 
         success: false,
-        message: 'User with this username, email or phone number already exists.....' 
+        message: `User with this ${duplicateField} already exists.`,
+        field: duplicateField
       });
     }
 
-    // Check if profile image was uploaded
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Profile image is required' 
-      });
+    // BEFORE saving, check if username would cause a duplicate key error
+    // This is a workaround while the index still exists
+    if (username) {
+      const userWithSameUsername = await User.findOne({ username });
+      if (userWithSameUsername) {
+        // Instead of failing, we can modify the username slightly
+        // Option 1: Add a random suffix
+        const newUsername = `${username}_${Date.now().toString().slice(-4)}`;
+        req.body.username = newUsername; // Use this for the new user
+        
+        console.log(`Username ${username} taken, using ${newUsername} instead`);
+      }
     }
 
     // Create new user with profile image data
     const newUser = new User({
-      username,
+      username: req.body.username, // Use possibly modified username
       email: email || undefined,
       countryCode,
       phoneNumber,
-      profileImage: {
+      profileImage: req.file ? {
         key: req.file.key,
         url: getS3Url(req.file.key),
         originalName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size
-      },
+      } : null,
       location: {
         lat: lat ? parseFloat(lat) : undefined,
         long: long ? parseFloat(long) : undefined
       },
       specialId: specialId || undefined,
-      role: role || 'user'
+      role: role || 'customer'
     });
 
     const savedUser = await newUser.save();
@@ -309,43 +331,60 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
     const accessToken = generateAccessToken(savedUser);
     const refreshToken = generateRefreshToken(savedUser);
 
-    // Save refresh token to user (optional - if you want to store in database)
     savedUser.refreshToken = refreshToken;
     await savedUser.save();
 
-    // Remove sensitive data from response
     const userResponse = savedUser.toObject();
-    delete userResponse.refreshToken; // if you stored it
+    delete userResponse.refreshToken;
     delete userResponse.__v;
+
+    // If we modified the username, include original in response
+    const responseData = {
+      user: userResponse,
+      tokens: {
+        accessToken,
+        refreshToken,
+        tokenType: 'Bearer',
+        expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d'
+      }
+    };
+
+    // If username was changed, add a note
+    if (username !== req.body.username) {
+      responseData.note = `Username was changed from "${username}" to "${req.body.username}" as it was taken`;
+    }
 
     res.status(201).json({
       success: true,
       message: 'User created successfully',
-      data: {
-        user: userResponse,
-        tokens: {
-          accessToken,
-          refreshToken,
-          tokenType: 'Bearer',
-          expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d'
-        }
-      }
+      data: responseData
     });
+    
   } catch (error) {
-    // If error occurs and file was uploaded, delete it from S3
     if (req.file) {
       await deleteFromS3(req.file.key).catch(err => 
-        console.error('Error deleting file after failed user creation:', err)
+        console.error('Error deleting file:', err)
       );
     }
 
     console.error('Create user error:', error);
     
-    // Handle duplicate key error
     if (error.code === 11000) {
+      if (error.keyPattern && error.keyPattern.username) {
+        // Special handling for username duplicate
+        return res.status(400).json({ 
+          success: false,
+          message: 'Username already taken. Please choose a different username.',
+          field: 'username',
+          suggestion: 'Add numbers or special characters to make it unique'
+        });
+      }
+      
+      const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
         success: false,
-        message: 'Duplicate field value entered' 
+        message: `User with this ${field} already exists.`,
+        field: field
       });
     }
 
@@ -359,8 +398,156 @@ router.post('/', upload.single('profileImage'), async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+// router.post('/', upload.single('profileImage'), async (req, res) => {
+//   try {
+//     const { username, email, countryCode, phoneNumber, lat, long, specialId, role } 
+//     = req.body;
+
+//     // Validation........
+//        if (!username || !countryCode || !phoneNumber) {
+//     // if (!countryCode || !phoneNumber) {
+//       // If file was uploaded but validation fails, delete it from S3
+//       if (req.file) {
+//         await deleteFromS3(req.file.key);
+//       }
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Please provide username, countryCode and phoneNumber' 
+//       });
+//     }
+
+//     // Check if user already exists
+//     const existingUser = await User.findOne({ 
+//       $or: [
+//         // { username },
+//         { phoneNumber },
+//          { role : 'customer' }, // Prevent creating another admin
+//         { email: email || '' }
+//       ]
+//     });
+
+
+//     conole.log('Existing user check:', existingUser);
+//     if (existingUser) {
+//       if (req.file) {
+//         await deleteFromS3(req.file.key);
+//       }
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'User with this email or phone number already exists.....' 
+//       });
+//     }
+
+//     // Check if profile image was uploaded
+//     if (!req.file) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Profile image is required' 
+//       });
+//     }
+
+//     // Create new user with profile image data
+//     const newUser = new User({
+//       username,
+//       email: email || undefined,
+//       countryCode,
+//       phoneNumber,
+//       profileImage: {
+//         key: req.file.key,
+//         url: getS3Url(req.file.key),
+//         originalName: req.file.originalname,
+//         mimeType: req.file.mimetype,
+//         size: req.file.size
+//       },
+//       location: {
+//         lat: lat ? parseFloat(lat) : undefined,
+//         long: long ? parseFloat(long) : undefined
+//       },
+//       specialId: specialId || undefined,
+//       role: role || 'customer'
+//     });
+
+//     const savedUser = await newUser.save();
+
+//     // Generate tokens
+//     const accessToken = generateAccessToken(savedUser);
+//     const refreshToken = generateRefreshToken(savedUser);
+
+//     // Save refresh token to user (optional - if you want to store in database)
+//     savedUser.refreshToken = refreshToken;
+//     await savedUser.save();
+
+//     // Remove sensitive data from response
+//     const userResponse = savedUser.toObject();
+//     delete userResponse.refreshToken; // if you stored it
+//     delete userResponse.__v;
+
+//     res.status(201).json({
+//       success: true,
+//       message: 'User created successfully',
+//       data: {
+//         user: userResponse,
+//         tokens: {
+//           accessToken,
+//           refreshToken,
+//           tokenType: 'Bearer',
+//           expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d'
+//         }
+//       }
+//     });
+//   } catch (error) {
+//     // If error occurs and file was uploaded, delete it from S3
+//     if (req.file) {
+//       await deleteFromS3(req.file.key).catch(err => 
+//         console.error('Error deleting file after failed user creation:', err)
+//       );
+//     }
+
+//     console.error('Create user error:', error);
+    
+//     // Handle duplicate key error
+//     if (error.code === 11000) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Duplicate field value entered' 
+//       });
+//     }
+
+//     res.status(500).json({ 
+//       success: false,
+//       message: 'Error creating user', 
+//       error: error.message 
+//     });
+//   }
+// });
+
+
+
+
+
+
+
+
+
+
+
+
 // ============= GET ALL USERS =============
 // GET /api/users - Get all users with filtering and sorting
+
+
+
+
+
+
+
 router.get('/', async (req, res) => {
   try {
     const { role, isActive, sort, page = 1, limit = 10 } = req.query;
@@ -503,12 +690,12 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
     const duplicateChecks = [];
     
     // Check username duplicate (if username is being changed)
-    if (username && username !== userToUpdate.username) {
-      duplicateChecks.push(
-        User.findOne({ username, _id: { $ne: req.params.id } })
-          .then(user => user ? 'username' : null)
-      );
-    }
+    // if (username && username !== userToUpdate.username) {
+    //   duplicateChecks.push(
+    //     User.findOne({ username, _id: { $ne: req.params.id } })
+    //       .then(user => user ? 'username' : null)
+    //   );
+    // }
     
     // Check email duplicate (if email is being changed and not empty)
     if (email && email !== userToUpdate.email) {
@@ -637,6 +824,7 @@ router.put('/:id', upload.single('profileImage'), async (req, res) => {
     });
   }
 });
+
 
 
 

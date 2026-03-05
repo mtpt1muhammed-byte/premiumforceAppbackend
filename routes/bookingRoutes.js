@@ -102,12 +102,12 @@ router.post('/',
       }
 
       // Check if car image is uploaded
-      if (!req.files || !req.files.carimage || !req.files.carimage[0]) {
-        return res.status(400).json({
-          success: false,
-          message: 'Car image is required'
-        });
-      }
+      // if (!req.files || !req.files.carimage || !req.files.carimage[0]) {
+      //   return res.status(400).json({
+      //     success: false,
+      //     message: 'Car image is required'
+      //   });
+      // }
 
       // CHECK FOR EXISTING BOOKING
       const existingBooking = await Booking.findOne({
@@ -1196,12 +1196,13 @@ router.patch('/:id/car-image',
   upload.single('carimage'), 
   async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'Car image is required'
-        });
-      }
+      
+      // if (!req.file) {
+      //   return res.status(400).json({
+      //     success: false,
+      //     message: 'Car image is required'
+      //   });
+      // }
 
       const booking = await Booking.findById(req.params.id);
       if (!booking) {
