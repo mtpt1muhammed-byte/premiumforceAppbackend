@@ -238,25 +238,6 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
 
 
 
-// ============= SEND PUSH NOTIFICATIONS =============
-    //  await NotificationService.sendMultipleNotifications(tokens, {
-    //     "title": "Order Assigned to you", "body": "A New Order Assigned To you", 
-    //     "data": stringifyData({
-    //       order_id: orders.order_id,
-    //       type: "order-create"
-    //     }),
-
-    //   });
-
-
-    // NotificationService.asyncErrorHandler(booking.driverID, {
-    //   title: "New Booking Created",
-    //   body: `A new booking has been created for ${booking.carName}`,
-    //   data: {
-    //     booking_id: booking._id,
-    //     type: "new-booking"
-    //   }
-    // });
 
 
 
@@ -329,6 +310,8 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
 
 
 // UPDATE booking by ID
+
+// UPDATE booking by ID
 router.put('/:id', 
   authMiddleware, 
   upload.fields([
@@ -377,7 +360,7 @@ router.put('/:id',
         carName, charge,
         carclass, carbrand, carmodel, specialRequestText,
         passengerCount, passengerNames, passengerMobile, distance,
-        bookingStatus, driverID
+        bookingStatus, driverID, customerID  // Added customerID here
       } = req.body;
 
       // Validate required fields (optional for update - you might want to make some fields optional)
@@ -385,7 +368,7 @@ router.put('/:id',
       if (!category || !city || !arrival || !pickupLat || !pickupLong || 
           !dropOffLat || !dropOffLong || !dropOffAddress || !carclass || 
           !carbrand || !carmodel || !passengerCount || !passengerNames || 
-          !passengerMobile || !distance || !charge || !carName || !driverID) {
+          !passengerMobile || !distance || !charge || !carName || !driverID || !customerID) {  // Added customerID validation
         
         // Delete uploaded files if validation fails
         if (req.files) {
@@ -395,7 +378,19 @@ router.put('/:id',
         
         return res.status(400).json({
           success: false,
-          message: 'Please provide all required fields'
+          message: 'Please provide all required fields including customerID'
+        });
+      }
+
+      // Validate customerID format if provided
+      if (customerID && !mongoose.Types.ObjectId.isValid(customerID)) {
+        if (req.files) {
+          if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
+          if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid customer ID format'
         });
       }
 
@@ -455,6 +450,7 @@ router.put('/:id',
         distance: distance ? String(distance).trim() : existingBooking.distance,
         bookingStatus: bookingStatus || existingBooking.bookingStatus,
         driverID: driverID || existingBooking.driverID,
+        customerID: customerID || existingBooking.customerID,  // Added customerID here
         updatedAt: new Date() // Add timestamp for tracking
       };
 
@@ -516,6 +512,94 @@ router.put('/:id',
         { new: true, runValidators: true } // Return updated document and run validators
       );
 
+      // Get the customerID to use for notifications (use the updated one)
+      const notificationCustomerId = customerID || existingBooking.customerID;
+
+      // Send notifications based on booking status
+      if (updatedBooking.bookingStatus === 'assigned') {
+        await notifyUser(
+          notificationCustomerId,
+          '✅ Booking trip Assigned',
+          `Your booking for ${updatedBooking.carName} has been assigned successfully.`,
+          {
+            type: 'booking_assigned',
+            bookingId: updatedBooking._id.toString(),
+            status: 'assigned',
+            carName: updatedBooking.carName
+          }
+        );
+      }
+      
+      if (updatedBooking.bookingStatus === 'start_pickup') {
+        await notifyUser(
+          notificationCustomerId,
+          '✅ Trip Pickup Started',
+          `Your pickup for ${updatedBooking.carName} has started.`,
+          {
+            type: 'pickup_started',
+            bookingId: updatedBooking._id.toString(),
+            status: 'start_pickup',
+            carName: updatedBooking.carName
+          }
+        );
+      }
+
+      if (updatedBooking.bookingStatus === 'ongoing') {
+        await notifyUser(
+          notificationCustomerId,
+          '✅ Trip On the way',
+          `You're on the way to your destination in ${updatedBooking.carName}.`,
+          {
+            type: 'trip_ongoing',
+            bookingId: updatedBooking._id.toString(),
+            status: 'ongoing',
+            carName: updatedBooking.carName
+          }
+        );
+      }
+
+      if (updatedBooking.bookingStatus === 'end') {
+        await notifyUser(
+          notificationCustomerId,
+          '✅ Destination Reached',
+          `You have reached your destination in ${updatedBooking.carName}.`,
+          {
+            type: 'destination_reached',
+            bookingId: updatedBooking._id.toString(),
+            status: 'end',
+            carName: updatedBooking.carName
+          }
+        );
+      }
+      
+      if (updatedBooking.bookingStatus === 'payment_pending') {
+        await notifyUser(
+          notificationCustomerId,
+          '✅ Payment Pending',
+          `Driver is awaiting payment for ${updatedBooking.carName}.`,
+          {
+            type: 'payment_pending',
+            bookingId: updatedBooking._id.toString(),
+            status: 'payment_pending',
+            carName: updatedBooking.carName
+          }
+        );
+      }
+
+      if (updatedBooking.bookingStatus === 'payment_completed') {
+        await notifyUser(
+          notificationCustomerId,
+          '✅ Trip Completed',
+          `Your trip with ${updatedBooking.carName} has been completed successfully.`,
+          {
+            type: 'trip_completed',
+            bookingId: updatedBooking._id.toString(),
+            status: 'payment_completed',
+            carName: updatedBooking.carName
+          }
+        );
+      }
+
       res.status(200).json({
         success: true,
         message: 'Booking updated successfully',
@@ -561,6 +645,340 @@ router.put('/:id',
       });
     }
 });
+
+
+
+
+
+
+
+
+// router.put('/:id', 
+//   authMiddleware, 
+//   upload.fields([
+//     { name: 'carimage', maxCount: 1 },
+//     { name: 'specialRequestAudio', maxCount: 1 }
+//   ]), 
+//   async (req, res) => {
+//     try {
+//       console.log('Update booking - ID:', req.params.id);
+//       console.log('Request body:', req.body);
+//       console.log('Request files:', req.files);
+
+//       const bookingId = req.params.id;
+
+//       // Validate booking ID
+//       if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+//         // Delete uploaded files if validation fails
+//         if (req.files) {
+//           if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
+//           if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
+//         }
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Invalid booking ID format'
+//         });
+//       }
+
+//       // Check if booking exists
+//       const existingBooking = await Booking.findById(bookingId);
+//       if (!existingBooking) {
+//         // Delete uploaded files if booking not found
+//         if (req.files) {
+//           if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
+//           if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
+//         }
+//         return res.status(404).json({
+//           success: false,
+//           message: 'Booking not found'
+//         });
+//       }
+
+//       // Extract fields from request body
+//       const {
+//         category, city, airport, terminal, flightNumber, arrival,
+//         pickupLat, pickupLong, dropOffLat, dropOffLong, dropOffAddress,
+//         carName, charge,
+//         carclass, carbrand, carmodel, specialRequestText,
+//         passengerCount, passengerNames, passengerMobile, distance,
+//         bookingStatus, driverID
+//       } = req.body;
+
+//       // Validate required fields (optional for update - you might want to make some fields optional)
+//       // You can adjust this validation based on which fields are required for update
+//       if (!category || !city || !arrival || !pickupLat || !pickupLong || 
+//           !dropOffLat || !dropOffLong || !dropOffAddress || !carclass || 
+//           !carbrand || !carmodel || !passengerCount || !passengerNames || 
+//           !passengerMobile || !distance || !charge || !carName || !driverID) {
+        
+//         // Delete uploaded files if validation fails
+//         if (req.files) {
+//           if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
+//           if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
+//         }
+        
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Please provide all required fields'
+//         });
+//       }
+
+//       // Validate date if provided
+//       let parsedDate = existingBooking.arrival;
+//       if (arrival) {
+//         parsedDate = new Date(arrival);
+//         if (isNaN(parsedDate.getTime())) {
+//           if (req.files) {
+//             if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
+//             if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
+//           }
+//           return res.status(400).json({
+//             success: false,
+//             message: 'Invalid date format for arrival'
+//           });
+//         }
+//       }
+
+//       // Parse passengerNames
+//       let parsedPassengerNames = existingBooking.passengerNames;
+//       if (passengerNames) {
+//         if (typeof passengerNames === 'string') {
+//           try {
+//             parsedPassengerNames = JSON.parse(passengerNames);
+//           } catch {
+//             parsedPassengerNames = passengerNames.split(',').map(name => name.trim());
+//           }
+//         } else if (Array.isArray(passengerNames)) {
+//           parsedPassengerNames = passengerNames;
+//         } else {
+//           parsedPassengerNames = [String(passengerNames)];
+//         }
+//       }
+
+//       // Prepare update data
+//       const updateData = {
+//         category: category ? String(category).trim() : existingBooking.category,
+//         city: city ? String(city).trim() : existingBooking.city,
+//         airport: airport ? String(airport).trim() : existingBooking.airport,
+//         terminal: terminal ? String(terminal).trim() : existingBooking.terminal,
+//         flightNumber: flightNumber ? String(flightNumber).trim() : existingBooking.flightNumber,
+//         arrival: parsedDate,
+//         pickupLat: pickupLat ? parseFloat(pickupLat) : existingBooking.pickupLat,
+//         pickupLong: pickupLong ? parseFloat(pickupLong) : existingBooking.pickupLong,
+//         dropOffLat: dropOffLat ? parseFloat(dropOffLat) : existingBooking.dropOffLat,
+//         dropOffLong: dropOffLong ? parseFloat(dropOffLong) : existingBooking.dropOffLong,
+//         dropOffAddress: dropOffAddress ? String(dropOffAddress).trim() : existingBooking.dropOffAddress,
+//         carName: carName ? String(carName).trim() : existingBooking.carName,
+//         carclass: carclass ? String(carclass).trim() : existingBooking.carclass,
+//         carbrand: carbrand ? String(carbrand).trim() : existingBooking.carbrand,
+//         carmodel: carmodel ? String(carmodel).trim() : existingBooking.carmodel,
+//         charge: charge ? String(charge).trim() : existingBooking.charge,
+//         passengerCount: passengerCount ? parseInt(passengerCount) : existingBooking.passengerCount,
+//         passengerNames: parsedPassengerNames,
+//         passengerMobile: passengerMobile ? String(passengerMobile).trim() : existingBooking.passengerMobile,
+//         distance: distance ? String(distance).trim() : existingBooking.distance,
+//         bookingStatus: bookingStatus || existingBooking.bookingStatus,
+//         driverID: driverID || existingBooking.driverID,
+//         updatedAt: new Date() // Add timestamp for tracking
+//       };
+
+//       // Handle file updates
+      
+//       // 1. Handle car image update
+//       if (req.files && req.files.carimage && req.files.carimage[0]) {
+//         // Delete old car image from S3 if exists
+//         if (existingBooking.carimage && existingBooking.carimage.key) {
+//           await deleteFromS3(existingBooking.carimage.key).catch(console.error);
+//         }
+        
+//         // Add new car image
+//         updateData.carimage = {
+//           key: req.files.carimage[0].key,
+//           url: getS3Url(req.files.carimage[0].key),
+//           originalName: req.files.carimage[0].originalname,
+//           mimeType: req.files.carimage[0].mimetype,
+//           size: req.files.carimage[0].size
+//         };
+//       }
+
+//       // 2. Handle special request audio update
+//       if (req.files && req.files.specialRequestAudio && req.files.specialRequestAudio[0]) {
+//         // Delete old audio from S3 if exists
+//         if (existingBooking.specialRequestAudio && existingBooking.specialRequestAudio.key) {
+//           await deleteFromS3(existingBooking.specialRequestAudio.key).catch(console.error);
+//         }
+        
+//         // Add new audio
+//         updateData.specialRequestAudio = {
+//           key: req.files.specialRequestAudio[0].key,
+//           url: getS3Url(req.files.specialRequestAudio[0].key),
+//           originalName: req.files.specialRequestAudio[0].originalname,
+//           mimeType: req.files.specialRequestAudio[0].mimetype,
+//           size: req.files.specialRequestAudio[0].size
+//         };
+//       }
+
+//       // 3. Handle special request text update
+//       if (specialRequestText !== undefined) {
+//         if (specialRequestText && specialRequestText.trim() !== '') {
+//           updateData.specialRequestText = String(specialRequestText).trim();
+//         } else {
+//           // If empty string is sent, remove the field
+//           updateData.$unset = { specialRequestText: 1 };
+//         }
+//       }
+
+//       // Add to tracking timeline
+//       updateData.$push = { TrackingTimeLine: 'booking_updated' };
+
+//       console.log('Update data:', updateData);
+
+//       // Update the booking
+//       const updatedBooking = await Booking.findByIdAndUpdate(
+//         bookingId,
+//         updateData,
+//         { new: true, runValidators: true } // Return updated document and run validators
+//       );
+
+//       if (updatedBooking.bookingStatus === 'assigned') {
+//          await notifyUser(
+//         customerID,
+//         '✅ Booking trip Assisgned',
+//         `Your booking for ${carName} has been created successfully.`,
+//         {
+//           type: 'booking Assigned',
+//           // bookingId: booking._id.toString(),
+//           status: 'confirmed',
+//           carName: carName
+//         }
+//       );
+//     }
+//     if (updatedBooking.bookingStatus === 'start_pickup') {
+//          await notifyUser(
+//         customerID,
+//         '✅ Trip Pickup Started',
+//         `Your booking for ${carName} has been created successfully.`,
+//         {
+//           type: 'booking Pickup Started',
+//           // bookingId: booking._id.toString(),
+//           status: 'Pickup Started',
+//           carName: carName
+//         }
+//       );
+//     }
+
+//        if (updatedBooking.bookingStatus === 'ongoing') {
+//          await notifyUser(
+//         customerID,
+//         '✅ Trip On the way to trip',
+//         `Your booking for ${carName} has been created successfully.`,
+//         {
+//           type: 'booking On the way to trip',
+//           // bookingId: booking._id.toString(),
+//           status: 'On the way to trip',
+//           carName: carName
+//         }
+//       );
+//     }
+
+//       if (updatedBooking.bookingStatus === 'end') {
+//          await notifyUser(
+//         customerID,
+//         '✅ Trip Destination Reached',
+//         `Your booking for ${carName} has been created successfully.`,
+//         {
+//           type: 'booking Destination Reached',
+//           // bookingId: booking._id.toString(),
+//           status: 'Destination Reached',
+//           carName: carName
+//         }
+//       );
+//     }
+//        if (updatedBooking.bookingStatus === 'payment_pending') {
+
+//          await notifyUser(
+//         customerID,
+//         '✅ Driver is awaiting Payment',
+//         `Your booking for ${carName} has been created successfully.`,
+//         {
+//           type: 'Diver is awaiting Payment',
+//           // bookingId: booking._id.toString(),
+//           status: 'Diver is Waiting for Payment',
+//           carName: carName
+//         }
+//       );
+//     }
+
+
+//     if (updatedBooking.bookingStatus === 'payment_completed') {
+
+//          await notifyUser(
+//         customerID,
+//         '✅Trip  Completed',
+//         `Your booking for ${carName} has been created successfully.`,
+//         {
+//           type: 'Trip Completed',
+//           // bookingId: booking._id.toString(),
+//           status: 'Completed Trip',
+//           carName: carName
+//         }
+//       );
+//     }
+
+
+//       res.status(200).json({
+//         success: true,
+//         message: 'Booking updated successfully',
+//         data: updatedBooking
+//       });
+
+//     } catch (error) {
+//       console.error('Update booking error:', error);
+      
+//       // Delete newly uploaded files if error occurs
+//       if (req.files) {
+//         if (req.files.carimage) {
+//           await deleteFromS3(req.files.carimage[0].key).catch(console.error);
+//         }
+//         if (req.files.specialRequestAudio) {
+//           await deleteFromS3(req.files.specialRequestAudio[0].key).catch(console.error);
+//         }
+//       }
+
+//       if (error.name === 'ValidationError') {
+//         const errors = {};
+//         for (let field in error.errors) {
+//           errors[field] = error.errors[field].message;
+//         }
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Validation error',
+//           errors: errors
+//         });
+//       }
+
+//       if (error.code === 11000) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Duplicate field value entered'
+//         });
+//       }
+
+//       res.status(500).json({
+//         success: false,
+//         message: 'Error updating booking',
+//         error: error.message
+//       });
+//     }
+// });
+
+
+
+
+
+
+
+
 
 
 // Optional: PATCH method for partial updates
