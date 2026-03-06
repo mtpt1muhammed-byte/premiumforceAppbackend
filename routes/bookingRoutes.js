@@ -196,13 +196,14 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
         carbrand: String(carbrand).trim(),
         carmodel: String(carmodel).trim(),
         charge: String(charge).trim(),
-        carimage: {
+        carimage:
+        req.files && req.files.carimage && req.files.carimage.length > 0 ? {
           key: req.files.carimage[0].key,
           url: getS3Url(req.files.carimage[0].key),
           originalName: req.files.carimage[0].originalname,
           mimeType: req.files.carimage[0].mimetype,
           size: req.files.carimage[0].size
-        },
+        }:null,
         driverID: driverID,
         passengerCount: parseInt(passengerCount),
         passengerNames: parsedPassengerNames,
