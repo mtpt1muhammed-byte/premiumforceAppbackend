@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Banner = require('../models/banner_model');
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
+
 const {   authenticateToken,
   authorizeAdmin,
   authorizeRoles,
@@ -357,7 +358,8 @@ router.post('/',
 
 // ============= GET ALL BANNERS =============
 // GET /api/banners - Get all banners with filtering
-router.get('/', async (req, res) => {
+router.get('/',  authenticateToken, 
+  authorizeAdmin, async (req, res) => {
   try {
     const { 
       categoryName, 
@@ -434,7 +436,8 @@ router.get('/', async (req, res) => {
 
 // ============= GET ACTIVE BANNERS (Public) =============
 // GET /api/banners/active - Get all active banners for display
-router.get('/active', async (req, res) => {
+router.get('/active',  authenticateToken, 
+  authorizeAdmin, async (req, res) => {
   try {
     const { categoryName, limit = 20 } = req.query;
 
@@ -472,7 +475,8 @@ router.get('/active', async (req, res) => {
 
 // ============= GET BANNER BY ID =============
 // GET /api/banners/:id - Get single banner
-router.get('/:id', async (req, res) => {
+router.get('/:id',  authenticateToken, 
+  authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -699,7 +703,8 @@ router.delete('/:id',
 
 // ============= TRACK BANNER CLICK =============
 // POST /api/banners/:id/click - Track banner click
-router.post('/:id/click', async (req, res) => {
+router.post('/:id/click',  authenticateToken, 
+  authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 

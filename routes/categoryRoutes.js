@@ -5,10 +5,6 @@ const Category = require('../models/categoryModel');
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 const {   authenticateToken,
   authorizeAdmin,
-  authorizeRoles,
-  authorizeAny,
-  // New refresh token functions
- 
  } = require('../middleware/adminmiddleware');
 
 // ============= HELPER FUNCTIONS =============
@@ -149,7 +145,8 @@ router.post('/',
 
 // ============= GET ALL CATEGORIES =============
 // GET /api/categories - Get all categories with filtering
-router.get('/', async (req, res) => {
+router.get('/',authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { 
       isActive, 
@@ -206,7 +203,8 @@ router.get('/', async (req, res) => {
 
 // ============= GET ACTIVE CATEGORIES (Public) =============
 // GET /api/categories/active - Get all active categories
-router.get('/active', async (req, res) => {
+router.get('/active',authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { limit = 50 } = req.query;
 
@@ -232,7 +230,8 @@ router.get('/active', async (req, res) => {
 
 // ============= GET CATEGORY BY ID =============
 // GET /api/categories/:id - Get single category
-router.get('/:id', async (req, res) => {
+router.get('/:id',authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -596,6 +595,7 @@ router.delete('/:id',
 router.patch('/bulk/status', 
   authenticateToken, 
   authorizeAdmin,
+  
   async (req, res) => {
     try {
       const { categoryIds, isActive } = req.body;

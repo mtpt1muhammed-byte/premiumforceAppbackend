@@ -80,7 +80,7 @@ router.post('/', authenticateToken, authorizeAdmin, upload.single('brandIcon'), 
 
 // ============= GET ALL BRANDS =============
 // GET /api/brands?page=1&limit=10&isActive=true&search=bmw
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { 
       isActive, 
@@ -127,7 +127,7 @@ router.get('/', async (req, res) => {
 
 // ============= GET ACTIVE BRANDS =============
 // GET /api/brands/active
-router.get('/active', async (req, res) => {
+router.get('/active',authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const brands = await Brand.find({ isActive: true })
       .sort({ brandName: 1 });
@@ -149,7 +149,7 @@ router.get('/active', async (req, res) => {
 
 // ============= GET BRAND BY ID =============
 // GET /api/brands/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id',authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
