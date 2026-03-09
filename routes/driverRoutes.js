@@ -1,9 +1,16 @@
+// routes/driverRoutes.js
 const express = require('express');
 const Driver = require('../models/driver_model');
 const DriverOTP = require('../models/driver_otp_model');
-const { verifyDriverOTP } = require('../middleware/driver_otp_middleware');
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 const jwt = require('jsonwebtoken');
+const {   authenticateToken,
+  authorizeAdmin,
+  authorizeRoles,
+  authorizeAny,
+  // New refresh token functions
+ 
+ } = require('../middleware/adminmiddleware');
 const twilio = require('twilio');
 
 const router = express.Router();
@@ -25,7 +32,7 @@ const generateAccessToken = (driver) => {
       role: 'driver'
     },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d' }
+    { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' }
   );
 };
 
@@ -37,13 +44,70 @@ const generateRefreshToken = (driver) => {
   );
 };
 
+// Middleware to verify token
+const verifyToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided'
+      });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    
+    const driver = await Driver.findById(decoded.driverId).select('-refreshToken -__v');
+    
+    if (!driver) {
+      return res.status(401).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+
+    if (!driver.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'Driver account is deactivated'
+      });
+    }
+
+    req.driver = driver;
+    next();
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token'
+      });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Token expired'
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: 'Error verifying token',
+      error: error.message
+    });
+  }
+};
 
 // ============= OTP ROUTES =============
 
-// Send OTP for driver login/registration
+/**
+ * @route   POST /api/drivers/send-otp
+ * @desc    Send OTP for driver login/registration
+ * @access  Public
+ */
 router.post('/send-otp', async (req, res) => {
   try {
-    const { phoneNumber, countryCode = '+91', purpose = 'login' } = req.body;
+    const { phoneNumber, countryCode = '+966', purpose = 'login' } = req.body;
 
     if (!phoneNumber) {
       return res.status(400).json({
@@ -54,9 +118,7 @@ router.post('/send-otp', async (req, res) => {
 
     // For login, check if driver exists
     if (purpose === 'login') {
-
-        
-      const existingDriver = await Driver.findOne({  countryCode, phoneNumber});
+      const existingDriver = await Driver.findOne({ countryCode, phoneNumber });
       console.log(`Checking driver existence for ${countryCode}${phoneNumber}:`, existingDriver);
       if (!existingDriver) {
         return res.status(404).json({
@@ -121,10 +183,14 @@ router.post('/send-otp', async (req, res) => {
   }
 });
 
-// Resend OTP
+/**
+ * @route   POST /api/drivers/resend-otp
+ * @desc    Resend OTP
+ * @access  Public
+ */
 router.post('/resend-otp', async (req, res) => {
   try {
-    const { phoneNumber, countryCode = '+91', purpose = 'login' } = req.body;
+    const { phoneNumber, countryCode = '+966', purpose = 'login' } = req.body;
 
     // Find existing OTP
     const existingOTP = await DriverOTP.findOne({
@@ -184,10 +250,14 @@ router.post('/resend-otp', async (req, res) => {
   }
 });
 
-// Verify OTP and login/register
+/**
+ * @route   POST /api/drivers/verify-otp
+ * @desc    Verify OTP and login/register
+ * @access  Public
+ */
 router.post('/verify-otp', async (req, res) => {
   try {
-    const { phoneNumber, countryCode = '+91', otp, purpose = 'login' } = req.body;
+    const { phoneNumber, countryCode = '+966', otp, purpose = 'login' } = req.body;
 
     // Find valid OTP
     const otpDoc = await DriverOTP.findOne({
@@ -231,8 +301,8 @@ router.post('/verify-otp', async (req, res) => {
         driver = new Driver({
           phoneNumber,
           countryCode,
-          driverName: `Driver_${phoneNumber.slice(-4)}`,
-          isVerified: true
+          driverName: `Driver_${phoneNumber.slice(-4)}`
+          // isVerified will be false until admin approval
         });
         await driver.save();
       }
@@ -245,19 +315,23 @@ router.post('/verify-otp', async (req, res) => {
     const accessToken = generateAccessToken(driver);
     const refreshToken = generateRefreshToken(driver);
 
-    // Save refresh token
+    // Save refresh token in database
     driver.refreshToken = refreshToken;
     await driver.save();
 
-    // Prepare response
+    // Prepare response with both tokens (client will store them)
     const response = {
       success: true,
       message: isNewDriver ? 'Registration successful' : 'Login successful',
-      accessToken,
-      refreshToken,
-      tokenType: 'Bearer',
-      expiresIn: process.env.JWT_ACCESS_EXPIRY || '1d',
-      driver: driver.getPublicProfile(),
+      data: {
+        driver: driver.getPublicProfile(),
+        tokens: {
+          accessToken,
+          refreshToken,
+          tokenType: 'Bearer',
+          expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+        }
+      },
       isNewDriver
     };
 
@@ -272,7 +346,11 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
-// Refresh token
+/**
+ * @route   POST /api/drivers/refresh-token
+ * @desc    Get new access token using refresh token from request body
+ * @access  Public
+ */
 router.post('/refresh-token', async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -280,48 +358,61 @@ router.post('/refresh-token', async (req, res) => {
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
-        message: 'Refresh token required'
+        message: 'Refresh token is required'
       });
     }
 
     // Verify refresh token
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired refresh token'
+      });
+    }
 
-    // Find driver with this token
+    // Find driver with this refresh token
     const driver = await Driver.findOne({ 
       _id: decoded.driverId,
       refreshToken: refreshToken 
     });
 
     if (!driver) {
-      return res.status(403).json({
+      return res.status(401).json({
         success: false,
         message: 'Invalid refresh token'
       });
     }
 
-    // Generate new tokens
+    // Check if driver is still active
+    if (!driver.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'Driver account is deactivated'
+      });
+    }
+
+    // Generate new tokens (token rotation)
     const newAccessToken = generateAccessToken(driver);
     const newRefreshToken = generateRefreshToken(driver);
 
-    // Update refresh token
+    // Update refresh token in database (invalidate old one)
     driver.refreshToken = newRefreshToken;
     await driver.save();
 
     res.status(200).json({
       success: true,
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-      tokenType: 'Bearer'
+      data: {
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        tokenType: 'Bearer',
+        expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+      }
     });
   } catch (error) {
     console.error('Refresh token error:', error);
-    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-      return res.status(403).json({
-        success: false,
-        message: 'Invalid or expired refresh token'
-      });
-    }
     res.status(500).json({
       success: false,
       message: 'Error refreshing token',
@@ -330,26 +421,28 @@ router.post('/refresh-token', async (req, res) => {
   }
 });
 
-// Logout
-router.post('/logout', async (req, res) => {
+/**
+ * @route   POST /api/drivers/logout
+ * @desc    Logout driver
+ * @access  Private
+ */
+router.post('/logout', verifyToken, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access token required'
-      });
-    }
+    // Get refresh token from request body
+    const { refreshToken } = req.body;
 
-    const accessToken = authHeader.split(' ')[1];
-    
-    // Verify token to get driver ID
-    const decoded = jwt.verify(accessToken, process.env.JWT_ACCESS_SECRET);
-    
-    // Remove refresh token
-    await Driver.findByIdAndUpdate(decoded.driverId, {
-      $unset: { refreshToken: 1 }
-    });
+    if (refreshToken) {
+      // Clear the specific refresh token from database
+      const driver = await Driver.findOne({ refreshToken: refreshToken });
+      if (driver) {
+        driver.refreshToken = null;
+        await driver.save();
+      }
+    } else {
+      // If no refresh token provided, clear current driver's refresh token
+      req.driver.refreshToken = null;
+      await req.driver.save();
+    }
 
     res.status(200).json({
       success: true,
@@ -367,214 +460,332 @@ router.post('/logout', async (req, res) => {
 
 // ============= DRIVER CRUD ROUTES =============
 
-// CREATE driver with complete details
-router.post('/', upload.single('vehicleImage'), async (req, res) => {
-  try {
-    const { 
-      driverName, 
-      vehicleName, 
-      modelName, 
-      vehicleBrand, 
-      vehicleCategory,
-      email,
-      phoneNumber,
-      countryCode = '+91'
-    } = req.body;
+/**
+ * @route   POST /api/drivers/register
+ * @desc    Register a new driver with profile and license images
+ * @access  Public (requires OTP verification)
+ */
+// POST /api/drivers/register - Register a new driver with profile and license images
+// POST /api/drivers/register - Register a new driver (profile image optional, license image required)
+// POST /api/drivers/register - Register a new driver (profile image optional)
+router.post('/register', 
+  authenticateToken, // Ensure the driver is authenticated via OTP
+  authorizeAdmin,
+  upload.fields([
+    { name: 'profileImage', maxCount: 1 },
+    { name: 'licenseImage', maxCount: 1 }
+  ]), 
+  async (req, res) => {
+    try {
+      const { 
+        driverName, 
+        phoneNumber,
+        countryCode = '+966',
+        licenseNumber,
+        isVerified = false
+      } = req.body;
 
-    // Validate required fields
-    if (!driverName || !vehicleName || !modelName || !vehicleBrand || !vehicleCategory || !phoneNumber) {
-      if (req.file) {
-        await deleteFromS3(req.file.key);
+      console.log('Request body:', req.body);
+      console.log('Request files:', req.files);
+
+      // Validate required fields
+      if (!driverName || !phoneNumber || !licenseNumber) {
+        // Delete uploaded files if validation fails
+        if (req.files) {
+          if (req.files.profileImage) {
+            await deleteFromS3(req.files.profileImage[0].key);
+          }
+          if (req.files.licenseImage) {
+            await deleteFromS3(req.files.licenseImage[0].key);
+          }
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide driverName, phoneNumber, and licenseNumber'
+        });
       }
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide all required fields: driverName, vehicleName, modelName, vehicleBrand, vehicleCategory, phoneNumber'
-      });
-    }
 
-    // Check if driver already exists
-    const existingDriver = await Driver.findOne({ phoneNumber, countryCode });
-    
-    if (existingDriver) {
-      if (req.file) {
-        await deleteFromS3(req.file.key);
+      // Check if driver already exists
+      const existingDriver = await Driver.findOne({ 
+        $or: [
+          { phoneNumber, countryCode },
+          { licenseNumber }
+        ]
+      });
+      
+      if (existingDriver) {
+        // Delete uploaded files
+        if (req.files) {
+          if (req.files.profileImage) {
+            await deleteFromS3(req.files.profileImage[0].key);
+          }
+          if (req.files.licenseImage) {
+            await deleteFromS3(req.files.licenseImage[0].key);
+          }
+        }
+        
+        let duplicateField = 'phone number';
+        if (existingDriver.licenseNumber === licenseNumber) {
+          duplicateField = 'license number';
+        }
+        
+        return res.status(400).json({
+          success: false,
+          message: `Driver with this ${duplicateField} already exists`
+        });
       }
-      return res.status(400).json({
-        success: false,
-        message: 'Driver with this phone number already exists'
+
+      // Check if license image is uploaded (required)
+      if (!req.files || !req.files.licenseImage) {
+        // Delete profile image if it was uploaded
+        if (req.files && req.files.profileImage) {
+          await deleteFromS3(req.files.profileImage[0].key);
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'License image is required'
+        });
+      }
+
+      // Prepare driver data with explicit null for profileImage
+      const driverData = {
+        driverName,
+        countryCode,
+        phoneNumber,
+        licenseNumber,
+        licenseImage: {
+          key: req.files.licenseImage[0].key,
+          url: getS3Url(req.files.licenseImage[0].key),
+          originalName: req.files.licenseImage[0].originalname,
+          mimeType: req.files.licenseImage[0].mimetype,
+          size: req.files.licenseImage[0].size
+        },
+        // Explicitly set profileImage to null by default
+        profileImage: null,
+        isVerified: isVerified === 'true' || isVerified === true
+      };
+
+      // Add profile image if uploaded (optional) - this will override the null
+      if (req.files.profileImage && req.files.profileImage[0]) {
+        driverData.profileImage = {
+          key: req.files.profileImage[0].key,
+          url: getS3Url(req.files.profileImage[0].key),
+          originalName: req.files.profileImage[0].originalname,
+          mimeType: req.files.profileImage[0].mimetype,
+          size: req.files.profileImage[0].size
+        };
+      }
+
+      // Create new driver
+      const newDriver = new Driver(driverData);
+      const savedDriver = await newDriver.save();
+
+      // Generate tokens
+      const accessToken = generateAccessToken(savedDriver);
+      const refreshToken = generateRefreshToken(savedDriver);
+
+      savedDriver.refreshToken = refreshToken;
+      await savedDriver.save();
+
+      // Get public profile which will show profileImage as null if not provided
+      const driverProfile = savedDriver.getPublicProfile();
+
+      // Prepare response message
+      const responseMessage = req.files.profileImage 
+        ? 'Driver registered successfully with profile image'
+        : 'Driver registered successfully (profile image not provided)';
+
+      res.status(201).json({
+        success: true,
+        message: responseMessage,
+        data: {
+          driver: driverProfile,
+          tokens: {
+            accessToken,
+            refreshToken,
+            tokenType: 'Bearer',
+            expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+          }
+        }
       });
-    }
-
-    // Check vehicle image
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vehicle image is required'
-      });
-    }
-
-    // Create new driver
-    const newDriver = new Driver({
-      driverName,
-      vehicleName,
-      modelName,
-      vehicleBrand,
-      vehicleCategory,
-      email: email || undefined,
-      countryCode,
-      phoneNumber,
-      vehicleImage: {
-        key: req.file.key,
-        url: getS3Url(req.file.key),
-        originalName: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size
-      },
-      isVerified: true
-    });
-
-    const savedDriver = await newDriver.save();
-
-    // Generate tokens
-    const accessToken = generateAccessToken(savedDriver);
-    const refreshToken = generateRefreshToken(savedDriver);
-
-    savedDriver.refreshToken = refreshToken;
-    await savedDriver.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Driver created successfully',
-      data: {
-        driver: savedDriver.getPublicProfile(),
-        tokens: {
-          accessToken,
-          refreshToken,
-          tokenType: 'Bearer'
+    } catch (error) {
+      // Delete uploaded files if error occurs
+      if (req.files) {
+        if (req.files.profileImage) {
+          await deleteFromS3(req.files.profileImage[0].key).catch(err => 
+            console.error('Error deleting profile image:', err)
+          );
+        }
+        if (req.files.licenseImage) {
+          await deleteFromS3(req.files.licenseImage[0].key).catch(err => 
+            console.error('Error deleting license image:', err)
+          );
         }
       }
-    });
-  } catch (error) {
-    if (req.file) {
-      await deleteFromS3(req.file.key).catch(err => 
-        console.error('Error deleting file:', err)
-      );
-    }
 
-    console.error('Create driver error:', error);
-    
-    if (error.code === 11000) {
-      return res.status(400).json({
+      console.error('Register driver error:', error);
+      
+      if (error.code === 11000) {
+        // Check which field caused the duplicate key error
+        const field = Object.keys(error.keyPattern)[0];
+        return res.status(400).json({
+          success: false,
+          message: `Driver with this ${field} already exists`,
+          field: field
+        });
+      }
+
+      if (error.name === 'ValidationError') {
+        const errors = {};
+        for (let field in error.errors) {
+          errors[field] = error.errors[field].message;
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: errors
+        });
+      }
+
+      res.status(500).json({
         success: false,
-        message: 'Phone number already exists'
+        message: 'Error registering driver',
+        error: error.message
       });
     }
-
-    res.status(500).json({
-      success: false,
-      message: 'Error creating driver',
-      error: error.message
-    });
   }
-});
+);
 
-// GET all drivers with filtering
-router.get('/', async (req, res) => {
+
+
+
+// ✅ SPECIFIC ROUTES FIRST - WITH DEBUG LOGS
+router.get('/all', verifyToken, authorizeAdmin, async (req, res) => {
+  console.log('🔥🔥🔥 /all ROUTE IS EXECUTING! 🔥🔥🔥');
+  console.log('Full URL:', req.originalUrl);
+  console.log('Params:', req.params);
+  console.log('Query:', req.query);
+  
   try {
-    const { 
-      vehicleCategory, 
-      isActive, 
-      isVerified,
-      minRating,
-      search,
-      sort = '-createdAt',
-      page = 1, 
-      limit = 10 
-    } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
 
-    // Build query
-    let query = {};
-    
-    if (vehicleCategory) query.vehicleCategory = vehicleCategory;
-    if (isActive !== undefined) query.isActive = isActive === 'true';
-    if (isVerified !== undefined) query.isVerified = isVerified === 'true';
-    if (minRating) query.rating = { $gte: parseFloat(minRating) };
-    
-    // Search by name or phone
-    if (search) {
-      query.$or = [
-        { driverName: { $regex: search, $options: 'i' } },
-        { phoneNumber: { $regex: search, $options: 'i' } },
-        { vehicleName: { $regex: search, $options: 'i' } }
-      ];
-    }
-
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    const drivers = await Driver.find(query)
-      .sort(sort)
+    const drivers = await Driver.find()
+      .sort('-createdAt')
       .skip(skip)
-      .limit(parseInt(limit))
-      .select('-refreshToken -__v');
-    
-    const total = await Driver.countDocuments(query);
+      .limit(limit)
+      .select('-refreshToken -__v -password');
+
+    const total = await Driver.countDocuments();
 
     res.status(200).json({
       success: true,
-      count: drivers.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      data: drivers
+      data: drivers,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: limit,
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1
+      }
     });
   } catch (error) {
-    console.error('Fetch drivers error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching drivers',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// GET driver by ID
-router.get('/:id', async (req, res) => {
+// ✅ PARAMETERIZED ROUTES LAST - WITH DEBUG LOGS
+router.get('/:id', verifyToken, authorizeAdmin, async (req, res) => {
+  console.log('🔍🔍🔍 /:id ROUTE IS EXECUTING! 🔍🔍🔍');
+  console.log('ID received:', req.params.id);
+  console.log('Full URL:', req.originalUrl);
+  
   try {
-    const driver = await Driver.findById(req.params.id)
-      .select('-refreshToken -__v');
-    
+    const driver = await Driver.findById(req.params.id);
     if (!driver) {
-      return res.status(404).json({
-        success: false,
-        message: 'Driver not found'
-      });
+      return res.status(404).json({ success: false, message: 'Driver not found' });
     }
-    
+    res.json({ success: true, data: driver });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ✅ OTHER SPECIFIC ROUTES
+router.get('/stats', verifyToken, authorizeAdmin, async (req, res) => {
+  // Your stats route
+});
+
+// ✅ PARAMETERIZED ROUTES LAST
+
+/**
+ * @route   GET /api/drivers/profile
+ * @desc    Get current driver profile
+ * @access  Private
+ */
+router.get('/profile', verifyToken,authorizeAdmin, async (req, res) => {
+  try {
     res.status(200).json({
       success: true,
-      data: driver
+      data: req.driver
     });
   } catch (error) {
-    console.error('Fetch driver error:', error);
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid driver ID format'
-      });
-    }
+    console.error('Fetch profile error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching driver',
+      message: 'Error fetching profile',
       error: error.message
     });
   }
 });
 
-// GET driver by phone number
-router.get('/phone/:phoneNumber', async (req, res) => {
+/**
+ * @route   GET /api/drivers/:id
+ * @desc    Get driver by ID
+ * @access  Private
+ */
+// router.get('/:id', verifyToken,authorizeAdmin, async (req, res) => {
+//   try {
+//     const driver = await Driver.findById(req.params.id)
+//       .select('-refreshToken -__v');
+    
+//     if (!driver) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Driver not found'
+//       });
+//     }
+    
+//     res.status(200).json({
+//       success: true,
+//       data: driver
+//     });
+//   } catch (error) {
+//     console.error('Fetch driver error:', error);
+//     if (error.name === 'CastError') {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Invalid driver ID format'
+//       });
+//     }
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error fetching driver',
+//       error: error.message
+//     });
+//   }
+// });
+
+/**
+ * @route   GET /api/drivers/phone/:phoneNumber
+ * @desc    Get driver by phone number
+ * @access  Private
+ */
+router.get('/phone/:phoneNumber', verifyToken,authorizeAdmin, async (req, res) => {
   try {
-    const { countryCode = '+91' } = req.query;
+    const { countryCode = '+966' } = req.query;
     
     const driver = await Driver.findOne({ 
       phoneNumber: req.params.phoneNumber,
@@ -602,23 +813,24 @@ router.get('/phone/:phoneNumber', async (req, res) => {
   }
 });
 
-// UPDATE driver
-// UPDATE driver with complete details
-router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
+/**
+ * @route   PUT /api/drivers/:id
+ * @desc    Update driver details
+ * @access  Private
+ */
+router.put('/:id', verifyToken, upload.fields([
+  { name: 'profileImage', maxCount: 1 },
+  { name: 'licenseImage', maxCount: 1 }
+]), async (req, res) => {
   try {
     const { id } = req.params;
     const { 
       driverName, 
-      vehicleName, 
-      modelName, 
-      vehicleBrand, 
-      vehicleCategory,
-      email,
       phoneNumber,
-      countryCode = '+91',
+      countryCode,
+      licenseNumber,
       isActive,
-    //   location,
-    //   documents,
+      isVerified,
       rating
     } = req.body;
 
@@ -626,12 +838,27 @@ router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
     const driver = await Driver.findById(id);
     
     if (!driver) {
-      if (req.file) {
-        await deleteFromS3(req.file.key);
+      // Delete uploaded files if driver not found
+      if (req.files) {
+        if (req.files.profileImage) await deleteFromS3(req.files.profileImage[0].key);
+        if (req.files.licenseImage) await deleteFromS3(req.files.licenseImage[0].key);
       }
       return res.status(404).json({
         success: false,
         message: 'Driver not found'
+      });
+    }
+
+    // Check permissions - only the driver themselves or admin can update
+    if (req.driver.role !== 'admin' && req.driver._id.toString() !== id) {
+      // Delete uploaded files if not authorized
+      if (req.files) {
+        if (req.files.profileImage) await deleteFromS3(req.files.profileImage[0].key);
+        if (req.files.licenseImage) await deleteFromS3(req.files.licenseImage[0].key);
+      }
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this driver'
       });
     }
 
@@ -644,8 +871,10 @@ router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
       });
       
       if (existingDriver) {
-        if (req.file) {
-          await deleteFromS3(req.file.key);
+        // Delete uploaded files
+        if (req.files) {
+          if (req.files.profileImage) await deleteFromS3(req.files.profileImage[0].key);
+          if (req.files.licenseImage) await deleteFromS3(req.files.licenseImage[0].key);
         }
         return res.status(400).json({
           success: false,
@@ -654,110 +883,87 @@ router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
       }
     }
 
-    // Handle vehicle image update
-    if (req.file) {
+    // Check license number uniqueness if being updated
+    if (licenseNumber && licenseNumber !== driver.licenseNumber) {
+      const existingDriver = await Driver.findOne({
+        licenseNumber,
+        _id: { $ne: id }
+      });
+      
+      if (existingDriver) {
+        // Delete uploaded files
+        if (req.files) {
+          if (req.files.profileImage) await deleteFromS3(req.files.profileImage[0].key);
+          if (req.files.licenseImage) await deleteFromS3(req.files.licenseImage[0].key);
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'License number already in use by another driver'
+        });
+      }
+    }
+
+    // Handle profile image update
+    if (req.files && req.files.profileImage) {
       try {
-        // Delete old image from S3
-        if (driver.vehicleImage?.key) {
-          await deleteFromS3(driver.vehicleImage.key).catch(err => 
-            console.error('Error deleting old image:', err)
+        // Delete old profile image from S3
+        if (driver.profileImage?.key) {
+          await deleteFromS3(driver.profileImage.key).catch(err => 
+            console.error('Error deleting old profile image:', err)
           );
         }
         
-        // Sanitize the original filename for S3 metadata
-        // Remove any non-ASCII or special characters that cause header errors
-        const sanitizedOriginalName = req.file.originalname
-          .replace(/[^\x00-\x7F]/g, '') // Remove non-ASCII characters
-          .replace(/[<>"']/g, '')        // Remove XML/HTML special chars
-          .replace(/[^\w\s.-]/g, '')      // Remove special characters
-          .replace(/\s+/g, ' ')           // Normalize spaces
-          .trim()
-          .substring(0, 255);              // Limit length
-
-        // If sanitized name is empty, use a default
-        const metadataOriginalName = sanitizedOriginalName || 'vehicle_image.jpg';
-        
-        // Set new image with sanitized metadata
-        driver.vehicleImage = {
-          key: req.file.key,
-          url: getS3Url(req.file.key),
-          originalName: req.file.originalname, // Keep original for display
-          mimeType: req.file.mimetype,
-          size: req.file.size
+        // Set new profile image
+        driver.profileImage = {
+          key: req.files.profileImage[0].key,
+          url: getS3Url(req.files.profileImage[0].key),
+          originalName: req.files.profileImage[0].originalname,
+          mimeType: req.files.profileImage[0].mimetype,
+          size: req.files.profileImage[0].size
         };
+      } catch (imageError) {
+        console.error('Error processing profile image:', imageError);
+      }
+    }
 
-        // Update S3 metadata if you have access to the S3 client
-        // This is optional - you can skip if you don't need metadata
-        try {
-          const { S3Client, CopyObjectCommand } = require('@aws-sdk/client-s3');
-          const s3Client = new S3Client({
-            region: process.env.AWS_REGION,
-            credentials: {
-              accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-            }
-          });
-
-          // Copy object to itself with new metadata
-          const copyCommand = new CopyObjectCommand({
-            Bucket: process.env.AWS_BUCKET_NAME,
-            CopySource: `${process.env.AWS_BUCKET_NAME}/${req.file.key}`,
-            Key: req.file.key,
-            Metadata: {
-              originalname: metadataOriginalName,
-              uploadedat: new Date().toISOString()
-            },
-            MetadataDirective: 'REPLACE'
-          });
-          
-          await s3Client.send(copyCommand).catch(err => {
-            console.log('Metadata update skipped - continuing without metadata');
-          });
-        } catch (metadataError) {
-          // Ignore metadata errors - continue with upload
-          console.log('Could not update metadata, but file uploaded successfully');
+    // Handle license image update
+    if (req.files && req.files.licenseImage) {
+      try {
+        // Delete old license image from S3
+        if (driver.licenseImage?.key) {
+          await deleteFromS3(driver.licenseImage.key).catch(err => 
+            console.error('Error deleting old license image:', err)
+          );
         }
         
+        // Set new license image
+        driver.licenseImage = {
+          key: req.files.licenseImage[0].key,
+          url: getS3Url(req.files.licenseImage[0].key),
+          originalName: req.files.licenseImage[0].originalname,
+          mimeType: req.files.licenseImage[0].mimetype,
+          size: req.files.licenseImage[0].size
+        };
       } catch (imageError) {
-        console.error('Error processing image:', imageError);
-        return res.status(500).json({
-          success: false,
-          message: 'Error processing vehicle image',
-          error: imageError.message
-        });
+        console.error('Error processing license image:', imageError);
       }
     }
 
     // Update fields
     const updatableFields = [
-      'driverName', 'vehicleName', 'modelName', 'vehicleBrand', 
-      'vehicleCategory', 'email', 'phoneNumber', 'countryCode',
-      'isActive', 'rating'
+      'driverName', 'phoneNumber', 'countryCode', 'licenseNumber',
+      'isActive', 'isVerified', 'rating'
     ];
     
     updatableFields.forEach(field => {
       if (req.body[field] !== undefined) {
+        // Only admin can change verification status
+        if ((field === 'isVerified' || field === 'isActive') && req.driver.role !== 'admin') {
+          return;
+        }
         driver[field] = req.body[field];
       }
     });
-
-    // Handle location (if provided as JSON string)
-    // if (location) {
-    //   try {
-    //     driver.location = typeof location === 'string' ? JSON.parse(location) : location;
-    //   } catch (error) {
-    //     console.error('Error parsing location:', error);
-    //   }
-    // }
-
-    // // Handle documents (if provided as JSON string)
-    // if (documents) {
-    //   try {
-    //     driver.documents = typeof documents === 'string' ? JSON.parse(documents) : documents;
-    //   } catch (error) {
-    //     console.error('Error parsing documents:', error);
-    //   }
-    // }
 
     // Save updated driver
     const updatedDriver = await driver.save();
@@ -769,11 +975,18 @@ router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
     });
 
   } catch (error) {
-    // Clean up uploaded file if error occurs
-    if (req.file) {
-      await deleteFromS3(req.file.key).catch(err => 
-        console.error('Error deleting file:', err)
-      );
+    // Clean up uploaded files if error occurs
+    if (req.files) {
+      if (req.files.profileImage) {
+        await deleteFromS3(req.files.profileImage[0].key).catch(err => 
+          console.error('Error deleting profile image:', err)
+        );
+      }
+      if (req.files.licenseImage) {
+        await deleteFromS3(req.files.licenseImage[0].key).catch(err => 
+          console.error('Error deleting license image:', err)
+        );
+      }
     }
 
     console.error('Update driver error:', error);
@@ -788,16 +1001,7 @@ router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: 'Phone number already exists'
-      });
-    }
-
-    // Handle header character error specifically
-    if (error.message && error.message.includes('Invalid character in header content')) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid filename. Please use only alphanumeric characters, dots, and hyphens in the filename.',
-        error: 'Filename contains invalid characters'
+        message: 'Phone number or license number already exists'
       });
     }
 
@@ -809,81 +1013,64 @@ router.put('/:id', upload.single('vehicleImage'), async (req, res) => {
   }
 });
 
-// PATCH update phone number with OTP verification
-router.patch('/:id/phone', async (req, res) => {
+/**
+ * @route   PATCH /api/drivers/:id/verify
+ * @desc    Verify driver (admin only)
+ * @access  Private (Admin only)
+ */
+router.patch('/:id/verify', verifyToken, async (req, res) => {
   try {
-    const { newPhoneNumber, newCountryCode = '+91', otp } = req.body;
-    
-    if (!newPhoneNumber || !otp) {
-      return res.status(400).json({
+    // Check if user is admin
+    if (req.driver.role !== 'admin') {
+      return res.status(403).json({
         success: false,
-        message: 'New phone number and OTP are required'
+        message: 'Only admins can verify drivers'
       });
     }
-    
-    // Verify OTP
-    const otpDoc = await DriverOTP.findOne({
-      phoneNumber: newPhoneNumber,
-      countryCode: newCountryCode,
-      otp,
-      purpose: 'update-phone',
-      isUsed: false,
-      expiresAt: { $gt: new Date() }
-    });
-    
-    if (!otpDoc) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or expired OTP'
-      });
-    }
-    
-    // Check if new phone number already exists
-    const existingDriver = await Driver.findOne({
-      phoneNumber: newPhoneNumber,
-      countryCode: newCountryCode,
-      _id: { $ne: req.params.id }
-    });
-    
-    if (existingDriver) {
-      return res.status(400).json({
-        success: false,
-        message: 'Phone number already in use'
-      });
-    }
-    
-    // Update driver's phone number
+
     const driver = await Driver.findByIdAndUpdate(
       req.params.id,
-      {
-        phoneNumber: newPhoneNumber,
-        countryCode: newCountryCode
-      },
-      { new: true, runValidators: true }
+      { isVerified: true },
+      { new: true }
     ).select('-refreshToken -__v');
-    
-    // Mark OTP as used
-    otpDoc.isUsed = true;
-    await otpDoc.save();
-    
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+
     res.status(200).json({
       success: true,
-      message: 'Phone number updated successfully',
+      message: 'Driver verified successfully',
       data: driver
     });
   } catch (error) {
-    console.error('Update phone error:', error);
+    console.error('Verify driver error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error updating phone number',
+      message: 'Error verifying driver',
       error: error.message
     });
   }
 });
 
-// DELETE driver
-router.delete('/:id', async (req, res) => {
+/**
+ * @route   DELETE /api/drivers/:id
+ * @desc    Delete driver
+ * @access  Private (Admin only)
+ */
+router.delete('/:id', verifyToken, async (req, res) => {
   try {
+    // Check if user is admin
+    if (req.driver.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only admins can delete driver accounts'
+      });
+    }
+
     const driver = await Driver.findById(req.params.id);
     
     if (!driver) {
@@ -893,19 +1080,14 @@ router.delete('/:id', async (req, res) => {
       });
     }
     
-    // Delete vehicle image from S3
-    if (driver.vehicleImage?.key) {
-      await deleteFromS3(driver.vehicleImage.key);
+    // Delete profile image from S3
+    if (driver.profileImage?.key) {
+      await deleteFromS3(driver.profileImage.key).catch(() => {});
     }
     
-    // Delete license image if exists
-    if (driver.documents?.licenseImage?.key) {
-      await deleteFromS3(driver.documents.licenseImage.key).catch(() => {});
-    }
-    
-    // Delete aadhar image if exists
-    if (driver.documents?.aadharImage?.key) {
-      await deleteFromS3(driver.documents.aadharImage.key).catch(() => {});
+    // Delete license image from S3
+    if (driver.licenseImage?.key) {
+      await deleteFromS3(driver.licenseImage.key).catch(() => {});
     }
     
     // Delete driver
@@ -931,90 +1113,70 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Update vehicle image only
-router.patch('/:id/vehicle-image', upload.single('vehicleImage'), async (req, res) => {
+/**
+ * @route   PATCH /api/drivers/:id/toggle-status
+ * @desc    Activate/deactivate driver (admin only)
+ * @access  Private (Admin only)
+ */
+router.patch('/:id/toggle-status', verifyToken, async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({
+    // Check if user is admin
+    if (req.driver.role !== 'admin') {
+      return res.status(403).json({
         success: false,
-        message: 'Vehicle image is required'
+        message: 'Only admins can change driver status'
       });
     }
-    
+
     const driver = await Driver.findById(req.params.id);
     
     if (!driver) {
-      await deleteFromS3(req.file.key);
       return res.status(404).json({
         success: false,
         message: 'Driver not found'
       });
     }
-    
-    // Delete old image
-    if (driver.vehicleImage?.key) {
-      await deleteFromS3(driver.vehicleImage.key).catch(err => 
-        console.error('Error deleting old image:', err)
-      );
-    }
-    
-    // Update with new image
-    driver.vehicleImage = {
-      key: req.file.key,
-      url: getS3Url(req.file.key),
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size
-    };
-    
+
+    // Toggle isActive status
+    driver.isActive = !driver.isActive;
     await driver.save();
-    
+
     res.status(200).json({
       success: true,
-      message: 'Vehicle image updated successfully',
+      message: `Driver ${driver.isActive ? 'activated' : 'deactivated'} successfully`,
       data: {
-        vehicleImage: driver.vehicleImage
+        _id: driver._id,
+        driverName: driver.driverName,
+        isActive: driver.isActive
       }
     });
   } catch (error) {
-    if (req.file) {
-      await deleteFromS3(req.file.key).catch(err => 
-        console.error('Error deleting file:', err)
-      );
-    }
-    
-    console.error('Update vehicle image error:', error);
+    console.error('Toggle driver status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error updating vehicle image',
+      message: 'Error toggling driver status',
       error: error.message
     });
   }
 });
 
-// Update driver location
-router.patch('/:id/location', async (req, res) => {
+/**
+ * @route   PATCH /api/drivers/:id/rating
+ * @desc    Update driver rating
+ * @access  Private
+ */
+router.patch('/:id/rating', verifyToken, async (req, res) => {
   try {
-    const { lat, long } = req.body;
-    
-    if (lat === undefined || long === undefined) {
+    const { rating } = req.body;
+
+    if (rating === undefined || rating < 0 || rating > 5) {
       return res.status(400).json({
         success: false,
-        message: 'Latitude and longitude are required'
+        message: 'Rating must be between 0 and 5'
       });
     }
-    
-    const driver = await Driver.findByIdAndUpdate(
-      req.params.id,
-      {
-        location: {
-          lat: parseFloat(lat),
-          long: parseFloat(long),
-          lastUpdated: new Date()
-        }
-      },
-      { new: true }
-    ).select('location driverName phoneNumber');
+
+    const driver = await Driver.findById(req.params.id);
     
     if (!driver) {
       return res.status(404).json({
@@ -1022,60 +1184,102 @@ router.patch('/:id/location', async (req, res) => {
         message: 'Driver not found'
       });
     }
-    
+
+    // Simple average rating calculation
+    driver.rating = parseFloat(rating);
+    await driver.save();
+
     res.status(200).json({
       success: true,
-      message: 'Location updated successfully',
-      data: driver.location
+      message: 'Rating updated successfully',
+      data: {
+        rating: driver.rating
+      }
     });
   } catch (error) {
-    console.error('Update location error:', error);
+    console.error('Update rating error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error updating location',
+      message: 'Error updating rating',
       error: error.message
     });
   }
 });
 
-// Get nearby drivers
-router.get('/nearby/location', async (req, res) => {
+/**
+ * @route   PATCH /api/drivers/:id/trips
+ * @desc    Increment total trips count
+ * @access  Private
+ */
+router.patch('/:id/trips', verifyToken, async (req, res) => {
   try {
-    const { lat, long, maxDistance = 5000, limit = 10 } = req.query;
-    
-    if (!lat || !long) {
-      return res.status(400).json({
+    const driver = await Driver.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { totalTrips: 1 } },
+      { new: true }
+    ).select('driverName totalTrips');
+
+    if (!driver) {
+      return res.status(404).json({
         success: false,
-        message: 'Latitude and longitude are required'
+        message: 'Driver not found'
       });
     }
-    
-    const drivers = await Driver.find({
-      isActive: true,
-      isVerified: true,
-      location: {
-        $near: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [parseFloat(long), parseFloat(lat)]
-          },
-          $maxDistance: parseInt(maxDistance)
-        }
-      }
-    })
-    .limit(parseInt(limit))
-    .select('driverName vehicleName vehicleCategory vehicleImage.url location rating');
-    
+
     res.status(200).json({
       success: true,
-      count: drivers.length,
-      data: drivers
+      message: 'Trips count updated',
+      data: driver
     });
   } catch (error) {
-    console.error('Find nearby drivers error:', error);
+    console.error('Update trips error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error finding nearby drivers',
+      message: 'Error updating trips count',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   PATCH /api/drivers/:id/earnings
+ * @desc    Update driver earnings
+ * @access  Private
+ */
+router.patch('/:id/earnings', verifyToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (amount === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount is required'
+      });
+    }
+
+    const driver = await Driver.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { earnings: parseFloat(amount) } },
+      { new: true }
+    ).select('driverName earnings');
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Earnings updated',
+      data: driver
+    });
+  } catch (error) {
+    console.error('Update earnings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating earnings',
       error: error.message
     });
   }

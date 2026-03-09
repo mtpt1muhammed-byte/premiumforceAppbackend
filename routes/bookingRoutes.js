@@ -29,16 +29,6 @@ router.post('/',
   ]), 
   async (req, res) => {
     try {
-
-
-
-
-
-
-  
-
-
-
       console.log('Request body:', req.body);
       console.log('Request files:', req.files);
 
@@ -48,17 +38,14 @@ router.post('/',
         carName, charge,
         carclass, carbrand, carmodel, specialRequestText,
         passengerCount, passengerNames, passengerMobile, distance,
-        customerID, bookingStatus,driverID
+        customerID, bookingStatus, driverID
       } = req.body;
 
-
-     
-
-      // Validation for required fields
+      // Validation for required fields (driverID is NOT required)
       if (!category || !city || !arrival || !pickupLat || !pickupLong || 
           !dropOffLat || !dropOffLong || !dropOffAddress || !carclass || 
           !carbrand || !carmodel || !passengerCount || !passengerNames || 
-          !passengerMobile || !distance || !customerID || !charge || !carName || !driverID) {
+          !passengerMobile || !distance || !customerID || !charge || !carName) {
         
         // Delete uploaded files if validation fails
         if (req.files) {
@@ -88,6 +75,28 @@ router.post('/',
         });
       }
 
+      // FIXED: Handle driverID validation properly - allow null, undefined, or valid ObjectId
+      // Check if driverID is provided and not null/undefined/empty string
+      if (driverID !== undefined && driverID !== null && driverID !== '') {
+        // Check if it's the string "null" and treat as null
+        if (driverID === 'null' || driverID === 'undefined') {
+          // Treat as null, don't validate
+          console.log('driverID is string null/undefined, treating as null');
+        } 
+        // Check if it's a valid ObjectId
+        else if (!mongoose.Types.ObjectId.isValid(driverID)) {
+          if (req.files) {
+            if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
+            if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
+          }
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid driver ID format',
+            receivedValue: driverID // This helps debug what was received
+          });
+        }
+      }
+
       // Validate date
       const parsedDate = new Date(arrival);
       if (isNaN(parsedDate.getTime())) {
@@ -100,14 +109,6 @@ router.post('/',
           message: 'Invalid date format for arrival'
         });
       }
-
-      // Check if car image is uploaded
-      // if (!req.files || !req.files.carimage || !req.files.carimage[0]) {
-      //   return res.status(400).json({
-      //     success: false,
-      //     message: 'Car image is required'
-      //   });
-      // }
 
       // CHECK FOR EXISTING BOOKING
       const existingBooking = await Booking.findOne({
@@ -124,33 +125,26 @@ router.post('/',
           if (req.files.carimage) await deleteFromS3(req.files.carimage[0].key);
           if (req.files.specialRequestAudio) await deleteFromS3(req.files.specialRequestAudio[0].key);
         }
-// NotificationService.asyncErrorHandler(existingBooking.driverID, {
-//       title: "New Booking Created",
-//       body: `A new booking has been created for ${existingBooking.carName}`,
-//       data: {
-//         booking_id: existingBooking._id,
-//         type: "new-booking"
-//       }
-//     });
 
-  console.log('Request body:',customerID);
+        console.log('Request body:', customerID);
 
-const userDetails = await User.findById(customerID).select('fcmToken').lean();
+        const userDetails = await User.findById(customerID).select('fcmToken').lean();
 
-   console.log(userDetails.fcmToken);
-   console.log(">>>>>>");
-   console.log(userDetails.fcmToken);
-  await notifyUser(
-        customerID,
-        '✅ Booking Confirmed',
-        `${carName} You already have a booking scheduled for this date`,
-        {
-          type: 'booking_created',
-          bookingId:existingBooking._id.toString(),
-          status: 'confirmed',
-          carName: carName
-        }
-      );
+        console.log(userDetails.fcmToken);
+        console.log(">>>>>>");
+        console.log(userDetails.fcmToken);
+        
+        await notifyUser(
+          customerID,
+          '✅ Booking Confirmed',
+          `${carName} You already have a booking scheduled for this date`,
+          {
+            type: 'booking_created',
+            bookingId: existingBooking._id.toString(),
+            status: 'confirmed',
+            carName: carName
+          }
+        );
 
         return res.status(400).json({
           success: false,
@@ -178,7 +172,7 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
         parsedPassengerNames = [String(passengerNames)];
       }
 
-      // Create booking object
+      // Create booking object - handle driverID properly
       const bookingData = {
         category: String(category).trim(),
         city: String(city).trim(),
@@ -196,15 +190,13 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
         carbrand: String(carbrand).trim(),
         carmodel: String(carmodel).trim(),
         charge: String(charge).trim(),
-        carimage:
-        req.files && req.files.carimage && req.files.carimage.length > 0 ? {
+        carimage: req.files && req.files.carimage && req.files.carimage.length > 0 ? {
           key: req.files.carimage[0].key,
           url: getS3Url(req.files.carimage[0].key),
           originalName: req.files.carimage[0].originalname,
           mimeType: req.files.carimage[0].mimetype,
           size: req.files.carimage[0].size
-        }:null,
-        driverID: driverID,
+        } : null,
         passengerCount: parseInt(passengerCount),
         passengerNames: parsedPassengerNames,
         passengerMobile: String(passengerMobile).trim(),
@@ -215,6 +207,15 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
         paymentStatus: false,
         rating: {}
       };
+
+      // FIXED: Properly handle driverID - set to null if not provided or invalid
+      if (driverID === undefined || driverID === null || driverID === '' || driverID === 'null' || driverID === 'undefined') {
+        bookingData.driverID = null; // Explicitly set to null
+        console.log('Setting driverID to null');
+      } else if (mongoose.Types.ObjectId.isValid(driverID)) {
+        bookingData.driverID = driverID;
+        console.log('Setting driverID to:', driverID);
+      }
 
       // Add optional fields
       if (specialRequestText && specialRequestText.trim() !== '') {
@@ -236,35 +237,24 @@ const userDetails = await User.findById(customerID).select('fcmToken').lean();
       const booking = new Booking(bookingData);
       await booking.save();
 
-
-
-
-
-
-
-     // Optional: Send notification to the customer that booking was created successfully
+      // Optional: Send notification to the customer that booking was created successfully
       await notifyUser(
         customerID,
         '✅ Booking Confirmed',
         `Your booking for ${carName} has been created successfully.`,
         {
           type: 'booking_created',
-          // bookingId: booking._id.toString(),
           status: 'confirmed',
           carName: carName
         }
       );
-
-      // ============= END PUSH NOTIFICATIONS =============
-
-
-
 
       res.status(201).json({
         success: true,
         message: 'Booking created successfully',
         data: booking
       });
+      
     } catch (error) {
       console.error('Create booking error:', error);
       
@@ -360,7 +350,7 @@ router.put('/:id',
         carName, charge,
         carclass, carbrand, carmodel, specialRequestText,
         passengerCount, passengerNames, passengerMobile, distance,
-        bookingStatus, driverID, customerID  // Added customerID here
+        bookingStatus, customerID  // Added customerID here
       } = req.body;
 
       // Validate required fields (optional for update - you might want to make some fields optional)
@@ -516,7 +506,8 @@ router.put('/:id',
       const notificationCustomerId = customerID || existingBooking.customerID;
 
       // Send notifications based on booking status
-      if (updatedBooking.bookingStatus === 'assigned') {
+      if (updatedBooking.bookingStatus === 'assigned') 
+        {
         await notifyUser(
           notificationCustomerId,
           '✅ Booking trip Assigned',
@@ -1440,6 +1431,80 @@ router.get('/:id', authMiddleware, async (req, res) => {
     });
   }
 });
+
+
+
+
+
+// GET /api/bookings/customer/:customerId - Get all bookings for a specific customer
+router.get('/customer/:customerId', authMiddleware, async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { status, page = 1, limit = 10, sort = '-createdAt' } = req.query;
+
+    // Validate customer ID
+    if (!mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid customer ID format'
+      });
+    }
+
+    // Build query
+    const query = { customerID: customerId };
+    
+    // Add status filter if provided
+    if (status) {
+      query.bookingStatus = status;
+    }
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get all bookings for the customer with full details
+    const bookings = await Booking.find(query)
+      .populate('customerID', 'username email phoneNumber profileImage')
+      .populate('driverID', 'driverName phoneNumber vehicleName vehicleImage rating')
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Get total count for pagination
+    const total = await Booking.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      message: 'Bookings fetched successfully',
+      count: bookings.length,
+      total: total,
+      page: parseInt(page),
+      pages: Math.ceil(total / parseInt(limit)),
+      data: bookings
+    });
+
+  } catch (error) {
+    console.error('Get customer bookings error:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid customer ID format'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching customer bookings',
+      error: error.message
+    });
+  }
+});
+
+
+
+
+
+
 
 // ============= UPDATE BOOKING STATUS =============
 // PATCH /api/bookings/:id/status - Update booking status

@@ -62,7 +62,7 @@ const bookingSchema = new mongoose.Schema({
     required: true
   },
   charge: {
-    type: String,
+    type: Number,
     required: true
   },
   carimage: {

@@ -1,6 +1,13 @@
 const mongoose = require('mongoose');
 
 const carSchema = new mongoose.Schema({
+
+   category: {
+    type: String,
+    required: [true, 'Category name is required'],
+    trim: true,
+    maxlength: [100, 'Category cannot exceed 100 characters']
+  },
  carName: {
     type: String,
     required: [true, 'Car name is required'],

@@ -11,6 +11,14 @@ const adminAssignDriverSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+        bookingID: {
+      type: String,
+      required: true
+    },
+    customerID:{
+      type: String,
+     required: true
+    },
     assignedAt: {
       type: Date,
       default: Date.now

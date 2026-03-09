@@ -51,6 +51,17 @@ const { OAuth2Client } = require('google-auth-library');
 const User = require('./models/users_model');
 
 
+const adminRoutes = require('./routes/adminRoutes');
+
+const cookieParser = require('cookie-parser'); // Add this
+
+const bannerRoutes = require('./routes/bannerRoutes');
+
+const categoryRoutes = require('./routes/categoryRoutes');
+
+const modelRoutes = require('./routes/modelRoutes');
+
+
 dotenv.config();
 
 const app = express();
@@ -60,6 +71,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser()); // Add cookie parser middleware
 
 // const crypto = require('crypto');
 // const refreshSecret = crypto.randomBytes(64).toString('hex');
@@ -150,12 +162,29 @@ app.use('/api/admin', assignDriverCar);
 
 
 
+app.use('/api/users/admin', adminRoutes);
+
+
 // Use car routes
 app.use('/api/cars', carRoutes);
 
 // app.use('/api/notifications', tokenRoutes); // Add token routes
 
+app.use('/api/banners', bannerRoutes);
 
+
+
+
+app.use('/api/categories', categoryRoutes);
+
+
+
+
+app.use('/api/models', modelRoutes);
+
+
+const brandRoutes = require('./routes/brandRoutes');
+app.use('/api/brands', brandRoutes);
 
 //google sign in 
 
@@ -579,9 +608,183 @@ app.get('/auth/me', authenticateJWT, async (req, res) => {
 
 
 
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'API is working',
+    timestamp: new Date().toISOString()
+  });
+});
 
 
 
+
+
+const COOKIENAME = 'user_email';
+const COOKIEEXPIRY = 7 * 24 * 60 * 60 * 1000; // 24 hours
+// In-memory store for refresh tokens (use DB in production)
+
+
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and password'
+      });
+    }
+
+    // Find admin by email (include password field for comparison)
+    const admin = await Admin.findOne({ email: email.toLowerCase() }).select('+password');
+
+    if (!admin) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check if admin is active
+    if (!admin.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account is deactivated. Please contact super admin.'
+      });
+    }
+
+    // Check password
+    const isPasswordMatch = await admin.comparePassword(password);
+
+    if (!isPasswordMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Update last login
+    admin.lastLogin = new Date();
+    await admin.save();
+
+    // Generate tokens
+    const accessToken = generateAccessToken(admin);
+    const refreshToken = generateRefreshToken(admin);
+
+    // Save refresh token in database
+    admin.refreshToken = refreshToken;
+    await admin.save();
+
+    // Prepare admin response (without sensitive data)
+    const adminResponse = admin.toObject();
+    delete adminResponse.refreshToken;
+    delete adminResponse.password;
+
+    // Set refresh token as HTTP-only cookie
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      // secure: process.env.NODE_ENV === 'production', // Set secure flag in production
+           secure: false, // Set secure flag in production
+      sameSite: 'Strict',
+      maxAge: COOKIEEXPIRY
+    });
+
+    // Return only access token in JSON response
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        admin: adminResponse,
+        accessToken, // Only access token in response
+        tokenType: 'Bearer',
+        expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+      }
+    });
+  } catch (error) {
+    console.error('Login admin error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error logging in',
+      error: error.message
+    });
+  }
+});
+
+
+//admin resgistration
+
+router.post('/register', async (req, res) => {
+  try {
+    const { email, password, role = 'admin' } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and password'
+      });
+    }
+
+    const existingAdmin = await Admin.findOne({ email: email.toLowerCase() });
+    if (existingAdmin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Admin with this email already exists'
+      });
+    }
+
+    // Create with plain password - middleware will hash it
+    const newAdmin = new Admin({
+      email: email.toLowerCase(),
+      password,  // Plain text - auto-hashed by pre-save
+      role
+    });
+
+    const savedAdmin = await newAdmin.save();  // Triggers pre-save hashing
+
+    // Generate tokens
+    const accessToken = generateAccessToken(savedAdmin);
+    const refreshToken = generateRefreshToken(savedAdmin);
+
+    // Save refresh token in database
+    savedAdmin.refreshToken = refreshToken;
+    await savedAdmin.save();
+
+    // Prepare admin response (without sensitive data)
+    const adminResponse = savedAdmin.toObject();
+    delete adminResponse.refreshToken;
+    delete adminResponse.password;
+
+    // Set refresh token as HTTP-only cookie
+    res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
+
+    // Return only access token in JSON response
+    res.status(201).json({
+      success: true,
+      message: 'Admin registered successfully',
+      data: {
+        admin: adminResponse,
+        accessToken, // Only access token in response
+        tokenType: 'Bearer',
+        expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+      }
+    });
+  } catch (error) {
+    console.error('Register admin error:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Admin with this email already exists'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Error registering admin',
+      error: error.message
+    });
+  }
+});
 
 
 // Root route

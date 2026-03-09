@@ -6,34 +6,6 @@ const driverSchema = new mongoose.Schema({
     required: [true, 'Driver name is required'],
     trim: true
   },
-  vehicleName: {
-    type: String,
-    required: [true, 'Vehicle name is required'],
-    trim: true
-  },
-  modelName: {
-    type: String,
-    required: [true, 'Model name is required'],
-    trim: true
-  },
-  vehicleBrand: {
-    type: String,
-    required: [true, 'Vehicle brand is required'],
-    trim: true
-  },
-  vehicleCategory: {
-    type: String,
-    required: [true, 'Vehicle category is required'],
-    // enum: ['sedan', 'suv', 'hatchback', 'luxury', 'mini', 'van', 'truck', 'bike'],
-    trim: true
-  },
-  email: {
-    type: String,
-    trim: true,
-    lowercase: true,
-    sparse: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
-  },
   countryCode: {
     type: String,
     required: [true, 'Country code is required'],
@@ -45,7 +17,26 @@ const driverSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
-  vehicleImage: {
+    licenseNumber: {
+    type: String,
+    required: [true, 'License number is required'],
+    unique: true,
+    trim: true
+  },
+    profileImage: {
+    key: {
+      type: String,
+      required: false
+    },
+    url: {
+      type: String,
+      required: false
+    },
+    originalName: String,
+    mimeType: String,
+    size: Number
+  },
+  licenseImage: {
     key: {
       type: String,
       required: true
@@ -72,23 +63,6 @@ const driverSchema = new mongoose.Schema({
   },
   lastLogin: {
     type: Date
-  },
-  location: {
-    lat: Number,
-    long: Number,
-    lastUpdated: Date
-  },
-  documents: {
-    licenseNumber: String,
-    licenseImage: {
-      key: String,
-      url: String
-    },
-    aadharNumber: String,
-    aadharImage: {
-      key: String,
-      url: String
-    }
   },
   rating: {
     type: Number,
