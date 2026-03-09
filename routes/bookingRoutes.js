@@ -8,6 +8,10 @@ const Booking = require('../models/booking_model');
 const User = require('../models/users_model');
 const authMiddleware = require('../middleware/authTheMiddle');
 
+const {   authenticateToken,
+  authorizeAdmin,
+ } = require('../middleware/adminmiddleware');
+
 // Import S3 configuration from your central config file (like in userRoutes)
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 
@@ -1347,7 +1351,8 @@ router.patch('/:id/charge-detailed', authMiddleware, async (req, res) => {
 
 // ============= GET ALL BOOKINGS =============
 // GET /api/bookings - Get all bookings with filtering
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { 
       customerID, 
@@ -1400,7 +1405,8 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // ============= GET BOOKING BY ID =============
 // GET /api/bookings/:id - Get single booking
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id',  authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id)
       .populate('customerID', 'username email phoneNumber profileImage');
@@ -1433,11 +1439,12 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 
-
-
-
 // GET /api/bookings/customer/:customerId - Get all bookings for a specific customer
-router.get('/customer/:customerId', authMiddleware, async (req, res) => {
+
+
+router.get('/customer/:customerId', 
+   authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { customerId } = req.params;
     const { status, page = 1, limit = 10, sort = '-createdAt' } = req.query;
@@ -1503,12 +1510,92 @@ router.get('/customer/:customerId', authMiddleware, async (req, res) => {
 
 
 
+// GET BOOKINGS BY DRIVER ID
+router.get('/driver/:driverid', authenticateToken,
+  authorizeAdmin, async (req, res) => {
+  try {
+    // FIXED: Use the correct parameter name from the route
+    const { driverid } = req.params;  // Changed from driverID to driverid
+    const { status, page = 1, limit = 10, sort = '-createdAt' } = req.query;
 
+    console.log('Driver ID received:', driverid);
+
+    // Validate driver ID
+
+    if (!mongoose.Types.ObjectId.isValid(driverid)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid driver ID format',
+        receivedId: driverid  // Helpful for debugging
+      });
+    }
+
+    // Build query - FIXED: Use driverid in query
+    const query = { driverID: driverid };  // The field in your schema might be driverId or driverID
+    
+    // Add status filter if provided
+    if (status) {
+      query.bookingStatus = status;
+    }
+
+    // Pagination
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    console.log('Query:', query);
+
+    // Get bookings for the driver with full details
+    const bookings = await Booking.find(query)
+      .populate('customerID', 'username email phoneNumber profileImage')
+      .populate('driverID', 'driverName phoneNumber vehicleName vehicleImage rating')
+      .sort(sort)
+      .skip(skip)
+      .limit(limitNum);
+
+    // Get total count for pagination
+    const total = await Booking.countDocuments(query);
+
+    console.log(`Found ${bookings.length} bookings for driver ${driverid}`);
+
+    res.status(200).json({
+      success: true,
+      message: bookings.length > 0 ? 'Bookings fetched successfully' : 'No bookings found for this driver',
+      data: bookings,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        totalItems: total,
+        itemsPerPage: limitNum,
+        hasNextPage: pageNum < Math.ceil(total / limitNum),
+        hasPrevPage: pageNum > 1
+      }
+    });
+
+  } catch (error) {
+    console.error('Get driver bookings error:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid driver ID format',
+        error: error.message
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching driver bookings',
+      error: error.message
+    });
+  }
+});
 
 
 // ============= UPDATE BOOKING STATUS =============
 // PATCH /api/bookings/:id/status - Update booking status
-router.patch('/:id/status', authMiddleware, async (req, res) => {
+router.patch('/:id/status', authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { status, driverID } = req.body;
     const { id } = req.params;
@@ -1579,7 +1666,9 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
 
 // ============= ADD RATING TO BOOKING =============
 // PATCH /api/bookings/:id/rating - Add rating
-router.patch('/:id/rating', authMiddleware, async (req, res) => {
+router.patch('/:id/rating',
+    authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const ratingData = req.body;
@@ -1621,7 +1710,8 @@ router.patch('/:id/rating', authMiddleware, async (req, res) => {
 
 // ============= UPDATE PAYMENT STATUS =============
 // PATCH /api/bookings/:id/payment - Update payment status
-router.patch('/:id/payment', authMiddleware, async (req, res) => {
+router.patch('/:id/payment', authenticateToken,
+  authorizeAdmin,async (req, res) => {
   try {
     const { id } = req.params;
     const { paymentStatus } = req.body;
@@ -1676,7 +1766,8 @@ router.patch('/:id/payment', authMiddleware, async (req, res) => {
 // ============= UPDATE CAR IMAGE =============
 // PATCH /api/bookings/:id/car-image - Update only car image
 router.patch('/:id/car-image', 
-  authMiddleware, 
+  authenticateToken,
+  authorizeAdmin,
   upload.single('carimage'), 
   async (req, res) => {
     try {
@@ -1743,7 +1834,8 @@ router.patch('/:id/car-image',
 
 // ============= DELETE BOOKING =============
 // DELETE /api/bookings/:id - Delete booking and associated files
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authenticateToken,
+  authorizeAdmin,async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id);
 
@@ -1786,7 +1878,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
 // ============= GET BOOKING CAR IMAGE =============
 // GET /api/bookings/:id/car-image - Get car image URL
-router.get('/:id/car-image', authMiddleware, async (req, res) => {
+router.get('/:id/car-image', authenticateToken,
+  authorizeAdmin, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id).select('carimage');
     
@@ -1823,5 +1916,6 @@ router.get('/:id/car-image', authMiddleware, async (req, res) => {
     });
   }
 });
+
 
 module.exports = router;
