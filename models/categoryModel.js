@@ -45,7 +45,7 @@ const categorySchema = new mongoose.Schema({
 
 // Index for better query performance
 categorySchema.index({ isActive: 1, priority: -1 });
-categorySchema.index({ name: 1 });
+// categorySchema.index({ name: 1 });
 
 // Method to get public category data
 categorySchema.methods.getPublicCategory = function() {

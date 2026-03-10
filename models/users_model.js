@@ -123,7 +123,7 @@ userSchema.set('toObject', { virtuals: true });
 // Define indexes here - ONLY ONCE
 // Only email and phoneNumber should be unique
 userSchema.index({ phoneNumber: 1 }, { unique: true });
-userSchema.index({ email: 1 }, { unique: true, sparse: true });
+// userSchema.index({ email: 1 }, { unique: true, sparse: true });
 // NO index on username - it can have duplicates
 
 const User = mongoose.model('User', userSchema);
