@@ -1508,8 +1508,6 @@ router.get('/customer/:customerId',
 });
 
 
-
-
 // GET BOOKINGS BY DRIVER ID
 router.get('/driver/:driverid', authenticateToken,
   authorizeAdmin, async (req, res) => {
@@ -1519,7 +1517,7 @@ router.get('/driver/:driverid', authenticateToken,
     const { status, page = 1, limit = 10, sort = '-createdAt' } = req.query;
 
     console.log('Driver ID received:', driverid);
-
+    
     // Validate driver ID
 
     if (!mongoose.Types.ObjectId.isValid(driverid)) {

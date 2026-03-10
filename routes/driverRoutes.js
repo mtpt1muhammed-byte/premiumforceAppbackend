@@ -711,7 +711,7 @@ router.put('/:id', authenticateToken, authorizeAdmin, upload.fields([
  * @desc    Register a new driver with profile and license images
  * @access  Public (requires OTP verification via phone)
  */
-router.post('/register', 
+router.post('/register', authenticateToken,authorizeAdmin,
   upload.fields([
     { name: 'profileImage', maxCount: 1 },
     { name: 'licenseImage', maxCount: 1 }
