@@ -113,10 +113,15 @@ router.post('/assign-driver', authenticateToken, authorizeAdmin, async (req, res
     });
 
     console.log('11. Existing assignment:', existingAssignment);
+console.log('Booking status:', booking.bookingStatus);
 
+console.log('Existing assignment status:', existingAssignment ? existingAssignment.status : 'N/A');
+console.log('Booking status:', booking.bookingStatus!='pending' ? "Not Pending" : 'N/A');
+
+// return;
 
     // IF ASSIGNMENT ALREADY EXISTS
-    if (existingAssignment || booking.bookingStatus !== 'completed') {
+    if ((existingAssignment && booking.bookingStatus=='assigned')||booking.bookingStatus!='completed' ) {
       console.log('⚠️ DUPLICATE ASSIGNMENT ATTEMPT: Driver already assigned to this booking');
       
       const assignedAdmin = await Admin.findById(existingAssignment.adminID).select('name email');
@@ -125,6 +130,7 @@ router.post('/assign-driver', authenticateToken, authorizeAdmin, async (req, res
       
       const adminName = assignedAdmin ? assignedAdmin.name || assignedAdmin.email || 'Unknown Admin' : 'Unknown Admin';
       
+
       return res.status(400).json({
         success: false,
         message: 'This driver is already assigned to this booking',
@@ -193,7 +199,7 @@ router.post('/assign-driver', authenticateToken, authorizeAdmin, async (req, res
           customerID: customerID,
           driverID: driverID,
           driverAssignedAt: new Date(),
-          bookingStatus: 'completed'
+          bookingStatus: 'assigned'
         }
       },
       { new: true }
