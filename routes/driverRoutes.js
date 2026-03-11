@@ -337,7 +337,7 @@ router.post('/complete-booking', authenticateDriver, async (req, res) => {
       await notifyUser(
         booking.customerID,
         '✅ Trip Completed',
-        `Your Trip has been completed successfully. Thank you for choosing our service!`,
+        `Your Trip has been completed successfully. Thank you for choosing our service!.Please review your experience`,
         {
           type: 'booking_completed',
           bookingId: bookingID.toString(),

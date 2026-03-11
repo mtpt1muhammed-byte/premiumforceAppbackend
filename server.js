@@ -51,6 +51,9 @@ const { OAuth2Client } = require('google-auth-library');
 const User = require('./models/users_model');
 
 
+const CityRoutes = require('./routes/cityRoutes');
+const AirportsRoutes = require('./routes/airportsRoutes');
+
 const adminRoutes = require('./routes/adminRoutes');
 
 const cookieParser = require('cookie-parser'); // Add this
@@ -60,7 +63,7 @@ const bannerRoutes = require('./routes/bannerRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 
 const modelRoutes = require('./routes/modelRoutes');
-
+const terminalRoutes = require('./routes/terminalRoutes');
 
 dotenv.config();
 
@@ -173,11 +176,12 @@ app.use('/api/cars', carRoutes);
 app.use('/api/banners', bannerRoutes);
 
 
-
+app.use('/api/airports', AirportsRoutes);
 
 app.use('/api/categories', categoryRoutes);
 
 
+app.use('/api/terminals', terminalRoutes);
 
 
 app.use('/api/models', modelRoutes);
@@ -185,6 +189,10 @@ app.use('/api/models', modelRoutes);
 
 const brandRoutes = require('./routes/brandRoutes');
 app.use('/api/brands', brandRoutes);
+
+
+app.use('/api/cities', CityRoutes);
+
 
 //google sign in 
 
