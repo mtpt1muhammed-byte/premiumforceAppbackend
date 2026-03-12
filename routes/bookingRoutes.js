@@ -23,13 +23,15 @@ const { notifyUser, notifyUsers } = require('../fcm');
 
 
 
+
+
 // ============= GET MONTHLY EARNINGS =============
 // GET /api/bookings/earnings/monthly - Get monthly earnings (Admin/Driver)
-router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, res) => {
+router.get('/earnings/monthly', authenticateToken, async (req, res) => {
   try {
     const { year = new Date().getFullYear(), driverId } = req.query;
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const userId = req.user.id; // From auth middleware
+    const userRole = req.user.role; // Assuming role is in token
 
     console.log('Fetching earnings for year:', year);
     console.log('User role:', userRole);
@@ -39,15 +41,26 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
     let matchQuery = {};
 
     if (userRole === 'driver') {
+      // Driver can only see their own earnings
       matchQuery.driverID = new mongoose.Types.ObjectId(userId);
     } else if (userRole === 'admin' && driverId) {
+      // Admin can see specific driver's earnings if driverId provided
       matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
     }
+    // If admin without driverId, show all drivers' earnings
 
-    // Create date range for the entire year
-    const startDate = new Date(year, 0, 1);
-    const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
+    // IMPORTANT: Include ALL booking statuses that represent completed/payment-ready trips
+    // Don't filter by bookingStatus if you want to see all earnings
+    // matchQuery.bookingStatus = { $in: ['completed', 'payment_completed', 'payment_pending', 'end'] };
+    
+    // Or remove status filter completely to see all bookings with charges
+    // The charge field exists regardless of status
 
+    // Create date range for the entire year based on createdAt
+    const startDate = new Date(year, 0, 1); // January 1st
+    const endDate = new Date(year, 11, 31, 23, 59, 59, 999); // December 31st
+
+    // Use createdAt instead of updatedAt for original booking date
     matchQuery.createdAt = {
       $gte: startDate,
       $lte: endDate
@@ -55,11 +68,32 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
 
     console.log('Earnings query:', JSON.stringify(matchQuery, null, 2));
 
-    // FIXED: Use $toDouble with onError to handle non-numeric strings
+    // First, let's get all bookings for debugging
+    const allBookings = await Booking.find(matchQuery).select('createdAt charge bookingStatus driverID');
+    console.log(`Found ${allBookings.length} bookings for year ${year}`);
+    console.log('Sample bookings:', allBookings.slice(0, 3));
+
+    if (allBookings.length === 0) {
+      // If no bookings found with createdAt, try with updatedAt as fallback
+      console.log('No bookings found with createdAt, trying updatedAt...');
+      const fallbackQuery = {
+        ...matchQuery,
+        updatedAt: matchQuery.createdAt
+      };
+      delete fallbackQuery.createdAt;
+      
+      const fallbackBookings = await Booking.find(fallbackQuery).select('updatedAt charge bookingStatus driverID');
+      console.log(`Found ${fallbackBookings.length} bookings with updatedAt`);
+      
+      if (fallbackBookings.length > 0) {
+        matchQuery = fallbackQuery;
+      }
+    }
+
+    // Aggregation pipeline for monthly earnings
     const pipeline = [
       { $match: matchQuery },
       {
-        
         $group: {
           _id: {
             month: { $month: "$createdAt" },
@@ -68,11 +102,10 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
           totalEarnings: { 
             $sum: { 
               $toDouble: {
-                $convert: {
-                  input: "$charge",
-                  to: "double",
-                  onError: 0, // If conversion fails, use 0
-                  onNull: 0    // If value is null, use 0
+                $cond: {
+                  if: { $isNumber: "$charge" },
+                  then: "$charge",
+                  else: { $toDouble: "$charge" }
                 }
               }
             } 
@@ -80,15 +113,15 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
           totalBookings: { $sum: 1 },
           averageCharge: { 
             $avg: { 
-              $convert: {
-                input: "$charge",
-                to: "double",
-                onError: 0,
-                onNull: 0
+              $toDouble: {
+                $cond: {
+                  if: { $isNumber: "$charge" },
+                  then: "$charge",
+                  else: { $toDouble: "$charge" }
+                }
               }
             } 
           },
-          rawCharges: { $push: "$charge" }, // Store raw values for debugging
           bookings: { $push: { 
             id: "$_id",
             charge: "$charge",
@@ -104,7 +137,7 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
 
     let monthlyData = await Booking.aggregate(pipeline);
 
-    console.log('Monthly aggregated data:', JSON.stringify(monthlyData, null, 2));
+    console.log('Monthly aggregated data:', monthlyData);
 
     // Format response with all months
     const months = [
@@ -112,9 +145,14 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
+    // Initialize all months with zero values
     const formattedData = months.map((month, index) => {
       const monthNum = index + 1;
       const monthData = monthlyData.find(d => d._id?.month === monthNum);
+      
+      // Get actual bookings for this month from the database (for detailed view)
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
       
       return {
         month: month,
@@ -124,7 +162,8 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
         totalBookings: monthData?.totalBookings || 0,
         averageCharge: monthData?.averageCharge || 0,
         hasData: !!monthData,
-        sampleCharges: monthData?.rawCharges?.slice(0, 5) || [] // Show sample charges for debugging
+        // Include sample bookings if available
+        sampleBookings: monthData?.bookings?.slice(0, 5) || []
       };
     });
 
@@ -144,7 +183,11 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
         year: parseInt(year),
         months: formattedData,
         summary: totals,
-        currency: 'INR'
+        currency: 'INR',
+        debug: {
+          totalBookingsInDB: allBookings.length,
+          queryUsed: matchQuery
+        }
       }
     });
 
@@ -166,203 +209,323 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
 
 
 
-// ============= DEBUG EARNINGS API =============
-// GET /api/bookings/earnings/debug - Debug endpoint to check data
-router.get('/earnings/debug', authenticateToken, authorizeAdmin, async (req, res) => {
+
+
+
+
+
+
+
+
+
+
+
+
+// ============= GET EARNINGS FOR SPECIFIC MONTH =============
+// GET /api/bookings/earnings/month/:month
+router.get('/earnings/month/:month', authenticateToken, async (req, res) => {
   try {
-    const { year = 2026 } = req.query;
-
-    // Get all bookings for the year
-    const startDate = new Date(year, 0, 1);
-    const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
-
-    const bookings = await Booking.find({
-      createdAt: { $gte: startDate, $lte: endDate }
-    }).select('createdAt charge bookingStatus driverID customerID');
-
-    // Group by month
-    const monthlyBreakdown = {};
-    
-    bookings.forEach(booking => {
-      const month = booking.createdAt.getMonth() + 1;
-      const charge = parseFloat(booking.charge) || 0;
-      
-      if (!monthlyBreakdown[month]) {
-        monthlyBreakdown[month] = {
-          count: 0,
-          total: 0,
-          bookings: []
-        };
-      }
-      
-      monthlyBreakdown[month].count++;
-      monthlyBreakdown[month].total += charge;
-      monthlyBreakdown[month].bookings.push({
-        id: booking._id,
-        charge: booking.charge,
-        date: booking.createdAt,
-        status: booking.bookingStatus
-      });
-    });
-
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
-    const debug = {
-      year: parseInt(year),
-      totalBookings: bookings.length,
-      totalEarnings: bookings.reduce((sum, b) => sum + (parseFloat(b.charge) || 0), 0),
-      monthlyBreakdown: Object.keys(monthlyBreakdown).map(month => ({
-        month: months[parseInt(month) - 1],
-        monthNumber: parseInt(month),
-        count: monthlyBreakdown[month].count,
-        total: monthlyBreakdown[month].total
-      })),
-      sampleBookings: bookings.slice(0, 10).map(b => ({
-        id: b._id,
-        date: b.createdAt,
-        charge: b.charge,
-        status: b.bookingStatus
-      }))
-    };
-
-    res.status(200).json({
-      success: true,
-      message: 'Debug info',
-      data: debug
-    });
-
-  } catch (error) {
-    console.error('Debug earnings error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error in debug',
-      error: error.message
-    });
-  }
-});
-
-// ============= GET ALL EARNINGS WITH FLEXIBLE FILTERING =============
-// GET /api/bookings/earnings/all - Get all earnings with flexible filtering
-router.get('/earnings/all', authenticateToken, async (req, res) => {
-  try {
-    const { 
-      year = 2026, 
-      month, 
-      driverId,
-      status,
-      fromDate,
-      toDate 
-    } = req.query;
-    
+    const { month } = req.params;
+    const { year = new Date().getFullYear(), driverId } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
 
-    let matchQuery = {};
+    // Validate month
+    const monthNum = parseInt(month);
+    if (monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid month. Must be between 1-12'
+      });
+    }
 
-    // Add driver filter based on role
+    // Build query
+    let matchQuery = {
+      bookingStatus: { $in: ['completed', 'payment_completed'] },
+      updatedAt: {
+        $gte: new Date(year, monthNum - 1, 1),
+        $lte: new Date(year, monthNum, 0, 23, 59, 59, 999)
+      }
+    };
+
     if (userRole === 'driver') {
       matchQuery.driverID = new mongoose.Types.ObjectId(userId);
     } else if (userRole === 'admin' && driverId) {
       matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
     }
 
-    // Date filtering
-    if (fromDate && toDate) {
-      matchQuery.createdAt = {
-        $gte: new Date(fromDate),
-        $lte: new Date(toDate)
-      };
-    } else if (month) {
-      const monthNum = parseInt(month);
-      matchQuery.createdAt = {
-        $gte: new Date(year, monthNum - 1, 1),
-        $lte: new Date(year, monthNum, 0, 23, 59, 59, 999)
-      };
-    } else {
-      matchQuery.createdAt = {
-        $gte: new Date(year, 0, 1),
-        $lte: new Date(year, 11, 31, 23, 59, 59, 999)
-      };
-    }
-
-    // Status filter (optional)
-    if (status) {
-      matchQuery.bookingStatus = status;
-    }
-
-    console.log('Earnings all query:', JSON.stringify(matchQuery, null, 2));
-
-    const earnings = await Booking.find(matchQuery)
+    // Get detailed bookings for the month
+    const bookings = await Booking.find(matchQuery)
       .populate('customerID', 'username email phoneNumber')
       .populate('driverID', 'driverName phoneNumber vehicleName')
-      .sort({ createdAt: -1 });
+      .sort({ updatedAt: -1 });
 
-    // Calculate totals
-    const totalEarnings = earnings.reduce((sum, booking) => {
-      return sum + (parseFloat(booking.charge) || 0);
-    }, 0);
+    // Calculate statistics
+    const stats = {
+      totalEarnings: 0,
+      totalBookings: bookings.length,
+      averageCharge: 0,
+      maxCharge: 0,
+      minCharge: Infinity
+    };
 
-    // Group by status
-    const byStatus = {};
-    earnings.forEach(booking => {
-      const status = booking.bookingStatus || 'unknown';
-      if (!byStatus[status]) {
-        byStatus[status] = {
-          count: 0,
-          total: 0
-        };
-      }
-      byStatus[status].count++;
-      byStatus[status].total += parseFloat(booking.charge) || 0;
+    bookings.forEach(booking => {
+      const charge = parseFloat(booking.charge) || 0;
+      stats.totalEarnings += charge;
+      stats.maxCharge = Math.max(stats.maxCharge, charge);
+      stats.minCharge = Math.min(stats.minCharge, charge);
     });
+
+    stats.averageCharge = stats.totalBookings > 0 ? 
+      stats.totalEarnings / stats.totalBookings : 0;
+    stats.minCharge = stats.minCharge === Infinity ? 0 : stats.minCharge;
+
+    res.status(200).json({
+      success: true,
+      message: 'Monthly details fetched successfully',
+      data: {
+        month: monthNum,
+        year: parseInt(year),
+        monthName: new Date(year, monthNum - 1).toLocaleString('default', { month: 'long' }),
+        statistics: stats,
+        bookings: bookings
+      }
+    });
+
+  } catch (error) {
+    console.error('Month earnings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching month earnings',
+      error: error.message
+    });
+  }
+});
+
+// ============= GET EARNINGS WITH DATE RANGE =============
+// GET /api/bookings/earnings/range?from=2024-01-01&to=2024-12-31
+router.get('/earnings/range', authenticateToken, async (req, res) => {
+  try {
+    const { from, to, driverId } = req.query;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    if (!from || !to) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide from and to dates'
+      });
+    }
+
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    toDate.setHours(23, 59, 59, 999);
+
+    // Build query
+    let matchQuery = {
+      bookingStatus: { $in: ['completed', 'payment_completed'] },
+      updatedAt: {
+        $gte: fromDate,
+        $lte: toDate
+      }
+    };
+
+    if (userRole === 'driver') {
+      matchQuery.driverID = new mongoose.Types.ObjectId(userId);
+    } else if (userRole === 'admin' && driverId) {
+      matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
+    }
+
+    // Group by day
+    const earnings = await Booking.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            year: { $year: "$updatedAt" },
+            month: { $month: "$updatedAt" },
+            day: { $dayOfMonth: "$updatedAt" }
+          },
+          earnings: { $sum: { $toDouble: "$charge" } },
+          bookings: { $sum: 1 },
+          charges: { $push: "$charge" }
+        }
+      },
+      { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } }
+    ]);
+
+    // Calculate summary
+    const summary = earnings.reduce((acc, day) => ({
+      totalEarnings: acc.totalEarnings + day.earnings,
+      totalBookings: acc.totalBookings + day.bookings,
+      averageDailyEarnings: 0
+    }), { totalEarnings: 0, totalBookings: 0 });
+
+    summary.averageDailyEarnings = earnings.length > 0 ? 
+      summary.totalEarnings / earnings.length : 0;
 
     res.status(200).json({
       success: true,
       message: 'Earnings fetched successfully',
       data: {
-        filters: {
-          year,
-          month: month || 'all',
-          driverId: driverId || 'all',
-          dateRange: fromDate && toDate ? { fromDate, toDate } : 'full year'
-        },
-        summary: {
-          totalBookings: earnings.length,
-          totalEarnings,
-          averagePerBooking: earnings.length > 0 ? totalEarnings / earnings.length : 0,
-          byStatus
-        },
-        earnings: earnings.map(e => ({
-          id: e._id,
-          date: e.createdAt,
-          charge: e.charge,
-          status: e.bookingStatus,
-          carName: e.carName,
-          customer: e.customerID,
-          driver: e.driverID
-        }))
+        from: fromDate,
+        to: toDate,
+        daily: earnings,
+        summary: summary
       }
     });
 
   } catch (error) {
-    console.error('All earnings error:', error);
+    console.error('Range earnings error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching earnings',
+      message: 'Error fetching earnings by range',
       error: error.message
     });
   }
 });
 
 
+// ============= GET EARNINGS SUMMARY =============
+// GET /api/bookings/earnings/summary
+router.get('/earnings/summary', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { driverId } = req.query;
 
+    let matchQuery = {
+      bookingStatus: { $in: ['completed', 'payment_completed'] }
+    };
 
+    if (userRole === 'driver') {
+      matchQuery.driverID = new mongoose.Types.ObjectId(userId);
+    } else if (userRole === 'admin' && driverId) {
+      matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
+    }
 
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
 
+    // Get various summaries
+    const [
+      totalEarnings,
+      thisMonthEarnings,
+      lastMonthEarnings,
+      dailyAverage,
+      bestDay,
+      worstDay
+    ] = await Promise.all([
+      // Total all-time earnings
+      Booking.aggregate([
+        { $match: matchQuery },
+        { $group: { _id: null, total: { $sum: { $toDouble: "$charge" } } } }
+      ]),
+      
+      // This month earnings
+      Booking.aggregate([
+        { 
+          $match: {
+            ...matchQuery,
+            updatedAt: {
+              $gte: new Date(currentYear, currentMonth, 1),
+              $lte: new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999)
+            }
+          }
+        },
+        { $group: { _id: null, total: { $sum: { $toDouble: "$charge" } } } }
+      ]),
+      
+      // Last month earnings
+      Booking.aggregate([
+        { 
+          $match: {
+            ...matchQuery,
+            updatedAt: {
+              $gte: new Date(currentYear, currentMonth - 1, 1),
+              $lte: new Date(currentYear, currentMonth, 0, 23, 59, 59, 999)
+            }
+          }
+        },
+        { $group: { _id: null, total: { $sum: { $toDouble: "$charge" } } } }
+      ]),
+      
+      // Daily average
+      Booking.aggregate([
+        { $match: matchQuery },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$updatedAt" },
+              month: { $month: "$updatedAt" },
+              day: { $dayOfMonth: "$updatedAt" }
+            },
+            dailyTotal: { $sum: { $toDouble: "$charge" } }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            average: { $avg: "$dailyTotal" }
+          }
+        }
+      ]),
+      
+      // Best day (highest earnings)
+      Booking.aggregate([
+        { $match: matchQuery },
+        {
+          $group: {
+            _id: {
+              date: { $dateToString: { format: "%Y-%m-%d", date: "$updatedAt" } }
+            },
+            total: { $sum: { $toDouble: "$charge" } }
+          }
+        },
+        { $sort: { total: -1 } },
+        { $limit: 1 }
+      ]),
+      
+      // Worst day (lowest earnings)
+      Booking.aggregate([
+        { $match: matchQuery },
+        {
+          $group: {
+            _id: {
+              date: { $dateToString: { format: "%Y-%m-%d", date: "$updatedAt" } }
+            },
+            total: { $sum: { $toDouble: "$charge" } }
+          }
+        },
+        { $sort: { total: 1 } },
+        { $limit: 1 }
+      ])
+    ]);
 
+    res.status(200).json({
+      success: true,
+      message: 'Earnings summary fetched successfully',
+      data: {
+        totalEarnings: totalEarnings[0]?.total || 0,
+        thisMonthEarnings: thisMonthEarnings[0]?.total || 0,
+        lastMonthEarnings: lastMonthEarnings[0]?.total || 0,
+        dailyAverage: dailyAverage[0]?.average || 0,
+        bestDay: bestDay[0] || { date: 'No data', total: 0 },
+        worstDay: worstDay[0] || { date: 'No data', total: 0 },
+        currency: 'SAR'
+      }
+    });
 
-
-
+  } catch (error) {
+    console.error('Earnings summary error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching earnings summary',
+      error: error.message
+    });
+  }
+});
 
 
 
