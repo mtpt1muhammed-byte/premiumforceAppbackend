@@ -23,6 +23,395 @@ const { notifyUser, notifyUsers } = require('../fcm');
 
 
 
+
+
+// ============= GET MONTHLY EARNINGS =============
+// GET /api/bookings/earnings/monthly - Get monthly earnings (Admin/Driver)
+router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, res) => {
+  try {
+    const { year = new Date().getFullYear(), driverId } = req.query;
+    const userId = req.user.id; // From auth middleware
+    const userRole = req.user.role; // Assuming role is in token
+
+    console.log('Fetching earnings for year:', year);
+    console.log('User role:', userRole);
+    console.log('User ID:', userId);
+
+    // Build query based on user role
+    let matchQuery = {};
+
+    if (userRole === 'driver') {
+      // Driver can only see their own earnings
+      matchQuery.driverID = new mongoose.Types.ObjectId(userId);
+    } else if (userRole === 'admin' && driverId) {
+      // Admin can see specific driver's earnings if driverId provided
+      matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
+    }
+    // If admin without driverId, show all drivers' earnings
+
+    // IMPORTANT: Include ALL booking statuses that represent completed/payment-ready trips
+    // Don't filter by bookingStatus if you want to see all earnings
+    // matchQuery.bookingStatus = { $in: ['completed', 'payment_completed', 'payment_pending', 'end'] };
+    
+    // Or remove status filter completely to see all bookings with charges
+    // The charge field exists regardless of status
+
+    // Create date range for the entire year based on createdAt
+    const startDate = new Date(year, 0, 1); // January 1st
+    const endDate = new Date(year, 11, 31, 23, 59, 59, 999); // December 31st
+
+    // Use createdAt instead of updatedAt for original booking date
+    matchQuery.createdAt = {
+      $gte: startDate,
+      $lte: endDate
+    };
+
+    console.log('Earnings query:', JSON.stringify(matchQuery, null, 2));
+
+    // First, let's get all bookings for debugging
+    const allBookings = await Booking.find(matchQuery).select('createdAt charge bookingStatus driverID');
+    console.log(`Found ${allBookings.length} bookings for year ${year}`);
+    console.log('Sample bookings:', allBookings.slice(0, 3));
+
+    if (allBookings.length === 0) {
+      // If no bookings found with createdAt, try with updatedAt as fallback
+      console.log('No bookings found with createdAt, trying updatedAt...');
+      const fallbackQuery = {
+        ...matchQuery,
+        updatedAt: matchQuery.createdAt
+      };
+      delete fallbackQuery.createdAt;
+      
+      const fallbackBookings = await Booking.find(fallbackQuery).select('updatedAt charge bookingStatus driverID');
+      console.log(`Found ${fallbackBookings.length} bookings with updatedAt`);
+      
+      if (fallbackBookings.length > 0) {
+        matchQuery = fallbackQuery;
+      }
+    }
+
+    // Aggregation pipeline for monthly earnings
+    const pipeline = [
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            month: { $month: "$createdAt" },
+            year: { $year: "$createdAt" }
+          },
+          totalEarnings: { 
+            $sum: { 
+              $toDouble: {
+                $cond: {
+                  if: { $isNumber: "$charge" },
+                  then: "$charge",
+                  else: { $toDouble: "$charge" }
+                }
+              }
+            } 
+          },
+          totalBookings: { $sum: 1 },
+          averageCharge: { 
+            $avg: { 
+              $toDouble: {
+                $cond: {
+                  if: { $isNumber: "$charge" },
+                  then: "$charge",
+                  else: { $toDouble: "$charge" }
+                }
+              }
+            } 
+          },
+          bookings: { $push: { 
+            id: "$_id",
+            charge: "$charge",
+            date: "$createdAt",
+            customerId: "$customerID",
+            carName: "$carName",
+            status: "$bookingStatus"
+          }}
+        }
+      },
+      { $sort: { "_id.month": 1 } }
+    ];
+
+    let monthlyData = await Booking.aggregate(pipeline);
+
+    console.log('Monthly aggregated data:', monthlyData);
+
+    // Format response with all months
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    // Initialize all months with zero values
+    const formattedData = months.map((month, index) => {
+      const monthNum = index + 1;
+      const monthData = monthlyData.find(d => d._id?.month === monthNum);
+      
+      // Get actual bookings for this month from the database (for detailed view)
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
+      
+      return {
+        month: month,
+        monthNumber: monthNum,
+        year: parseInt(year),
+        totalEarnings: monthData?.totalEarnings || 0,
+        totalBookings: monthData?.totalBookings || 0,
+        averageCharge: monthData?.averageCharge || 0,
+        hasData: !!monthData,
+        // Include sample bookings if available
+        sampleBookings: monthData?.bookings?.slice(0, 5) || []
+      };
+    });
+
+    // Calculate totals
+    const totals = {
+      totalEarnings: formattedData.reduce((sum, m) => sum + m.totalEarnings, 0),
+      totalBookings: formattedData.reduce((sum, m) => sum + m.totalBookings, 0),
+      averageMonthlyEarnings: formattedData.reduce((sum, m) => sum + m.totalEarnings, 0) / 12,
+      averageBookingValue: formattedData.reduce((sum, m) => sum + m.totalEarnings, 0) / 
+                          (formattedData.reduce((sum, m) => sum + m.totalBookings, 0) || 1)
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Monthly earnings fetched successfully',
+      data: {
+        year: parseInt(year),
+        months: formattedData,
+        summary: totals,
+        currency: 'SAR',
+        debug: {
+          totalBookingsInDB: allBookings.length,
+          queryUsed: matchQuery
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Monthly earnings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching monthly earnings',
+      error: error.message
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+// ============= DEBUG EARNINGS API =============
+// GET /api/bookings/earnings/debug - Debug endpoint to check data
+router.get('/earnings/debug', authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const { year = 2026 } = req.query;
+
+    // Get all bookings for the year
+    const startDate = new Date(year, 0, 1);
+    const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
+
+    const bookings = await Booking.find({
+      createdAt: { $gte: startDate, $lte: endDate }
+    }).select('createdAt charge bookingStatus driverID customerID');
+
+    // Group by month
+    const monthlyBreakdown = {};
+    
+    bookings.forEach(booking => {
+      const month = booking.createdAt.getMonth() + 1;
+      const charge = parseFloat(booking.charge) || 0;
+      
+      if (!monthlyBreakdown[month]) {
+        monthlyBreakdown[month] = {
+          count: 0,
+          total: 0,
+          bookings: []
+        };
+      }
+      
+      monthlyBreakdown[month].count++;
+      monthlyBreakdown[month].total += charge;
+      monthlyBreakdown[month].bookings.push({
+        id: booking._id,
+        charge: booking.charge,
+        date: booking.createdAt,
+        status: booking.bookingStatus
+      });
+    });
+
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    const debug = {
+      year: parseInt(year),
+      totalBookings: bookings.length,
+      totalEarnings: bookings.reduce((sum, b) => sum + (parseFloat(b.charge) || 0), 0),
+      monthlyBreakdown: Object.keys(monthlyBreakdown).map(month => ({
+        month: months[parseInt(month) - 1],
+        monthNumber: parseInt(month),
+        count: monthlyBreakdown[month].count,
+        total: monthlyBreakdown[month].total
+      })),
+      sampleBookings: bookings.slice(0, 10).map(b => ({
+        id: b._id,
+        date: b.createdAt,
+        charge: b.charge,
+        status: b.bookingStatus
+      }))
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Debug info',
+      data: debug
+    });
+
+  } catch (error) {
+    console.error('Debug earnings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error in debug',
+      error: error.message
+    });
+  }
+});
+
+// ============= GET ALL EARNINGS WITH FLEXIBLE FILTERING =============
+// GET /api/bookings/earnings/all - Get all earnings with flexible filtering
+router.get('/earnings/all', authenticateToken, async (req, res) => {
+  try {
+    const { 
+      year = 2026, 
+      month, 
+      driverId,
+      status,
+      fromDate,
+      toDate 
+    } = req.query;
+    
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    let matchQuery = {};
+
+    // Add driver filter based on role
+    if (userRole === 'driver') {
+      matchQuery.driverID = new mongoose.Types.ObjectId(userId);
+    } else if (userRole === 'admin' && driverId) {
+      matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
+    }
+
+    // Date filtering
+    if (fromDate && toDate) {
+      matchQuery.createdAt = {
+        $gte: new Date(fromDate),
+        $lte: new Date(toDate)
+      };
+    } else if (month) {
+      const monthNum = parseInt(month);
+      matchQuery.createdAt = {
+        $gte: new Date(year, monthNum - 1, 1),
+        $lte: new Date(year, monthNum, 0, 23, 59, 59, 999)
+      };
+    } else {
+      matchQuery.createdAt = {
+        $gte: new Date(year, 0, 1),
+        $lte: new Date(year, 11, 31, 23, 59, 59, 999)
+      };
+    }
+
+    // Status filter (optional)
+    if (status) {
+      matchQuery.bookingStatus = status;
+    }
+
+    console.log('Earnings all query:', JSON.stringify(matchQuery, null, 2));
+
+    const earnings = await Booking.find(matchQuery)
+      .populate('customerID', 'username email phoneNumber')
+      .populate('driverID', 'driverName phoneNumber vehicleName')
+      .sort({ createdAt: -1 });
+
+    // Calculate totals
+    const totalEarnings = earnings.reduce((sum, booking) => {
+      return sum + (parseFloat(booking.charge) || 0);
+    }, 0);
+
+    // Group by status
+    const byStatus = {};
+    earnings.forEach(booking => {
+      const status = booking.bookingStatus || 'unknown';
+      if (!byStatus[status]) {
+        byStatus[status] = {
+          count: 0,
+          total: 0
+        };
+      }
+      byStatus[status].count++;
+      byStatus[status].total += parseFloat(booking.charge) || 0;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Earnings fetched successfully',
+      data: {
+        filters: {
+          year,
+          month: month || 'all',
+          driverId: driverId || 'all',
+          dateRange: fromDate && toDate ? { fromDate, toDate } : 'full year'
+        },
+        summary: {
+          totalBookings: earnings.length,
+          totalEarnings,
+          averagePerBooking: earnings.length > 0 ? totalEarnings / earnings.length : 0,
+          byStatus
+        },
+        earnings: earnings.map(e => ({
+          id: e._id,
+          date: e.createdAt,
+          charge: e.charge,
+          status: e.bookingStatus,
+          carName: e.carName,
+          customer: e.customerID,
+          driver: e.driverID
+        }))
+      }
+    });
+
+  } catch (error) {
+    console.error('All earnings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching earnings',
+      error: error.message
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ============= CREATE BOOKING with Images =============
 // POST /api/bookings - Create a new booking with car image and optional audio
 router.post('/', 
@@ -363,7 +752,7 @@ router.put('/:id',
         return value !== undefined && value !== null && value !== '' && value !== 'null' && value !== 'undefined';
       };
 
-      
+
       // Validate required fields (only if they are being updated)
       const requiredFields = [
         { name: 'category', value: category },
