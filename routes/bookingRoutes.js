@@ -183,7 +183,7 @@ router.get('/earnings/monthly', authenticateToken, async (req, res) => {
         year: parseInt(year),
         months: formattedData,
         summary: totals,
-        currency: 'INR',
+        currency: 'SAR',
         debug: {
           totalBookingsInDB: allBookings.length,
           queryUsed: matchQuery
