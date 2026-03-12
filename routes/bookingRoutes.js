@@ -23,15 +23,13 @@ const { notifyUser, notifyUsers } = require('../fcm');
 
 
 
-
-
 // ============= GET MONTHLY EARNINGS =============
 // GET /api/bookings/earnings/monthly - Get monthly earnings (Admin/Driver)
 router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, res) => {
   try {
     const { year = new Date().getFullYear(), driverId } = req.query;
-    const userId = req.user.id; // From auth middleware
-    const userRole = req.user.role; // Assuming role is in token
+    const userId = req.user.id;
+    const userRole = req.user.role;
 
     console.log('Fetching earnings for year:', year);
     console.log('User role:', userRole);
@@ -41,26 +39,15 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
     let matchQuery = {};
 
     if (userRole === 'driver') {
-      // Driver can only see their own earnings
       matchQuery.driverID = new mongoose.Types.ObjectId(userId);
     } else if (userRole === 'admin' && driverId) {
-      // Admin can see specific driver's earnings if driverId provided
       matchQuery.driverID = new mongoose.Types.ObjectId(driverId);
     }
-    // If admin without driverId, show all drivers' earnings
 
-    // IMPORTANT: Include ALL booking statuses that represent completed/payment-ready trips
-    // Don't filter by bookingStatus if you want to see all earnings
-    // matchQuery.bookingStatus = { $in: ['completed', 'payment_completed', 'payment_pending', 'end'] };
-    
-    // Or remove status filter completely to see all bookings with charges
-    // The charge field exists regardless of status
+    // Create date range for the entire year
+    const startDate = new Date(year, 0, 1);
+    const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
 
-    // Create date range for the entire year based on createdAt
-    const startDate = new Date(year, 0, 1); // January 1st
-    const endDate = new Date(year, 11, 31, 23, 59, 59, 999); // December 31st
-
-    // Use createdAt instead of updatedAt for original booking date
     matchQuery.createdAt = {
       $gte: startDate,
       $lte: endDate
@@ -68,32 +55,11 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
 
     console.log('Earnings query:', JSON.stringify(matchQuery, null, 2));
 
-    // First, let's get all bookings for debugging
-    const allBookings = await Booking.find(matchQuery).select('createdAt charge bookingStatus driverID');
-    console.log(`Found ${allBookings.length} bookings for year ${year}`);
-    console.log('Sample bookings:', allBookings.slice(0, 3));
-
-    if (allBookings.length === 0) {
-      // If no bookings found with createdAt, try with updatedAt as fallback
-      console.log('No bookings found with createdAt, trying updatedAt...');
-      const fallbackQuery = {
-        ...matchQuery,
-        updatedAt: matchQuery.createdAt
-      };
-      delete fallbackQuery.createdAt;
-      
-      const fallbackBookings = await Booking.find(fallbackQuery).select('updatedAt charge bookingStatus driverID');
-      console.log(`Found ${fallbackBookings.length} bookings with updatedAt`);
-      
-      if (fallbackBookings.length > 0) {
-        matchQuery = fallbackQuery;
-      }
-    }
-
-    // Aggregation pipeline for monthly earnings
+    // FIXED: Use $toDouble with onError to handle non-numeric strings
     const pipeline = [
       { $match: matchQuery },
       {
+        
         $group: {
           _id: {
             month: { $month: "$createdAt" },
@@ -102,10 +68,11 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
           totalEarnings: { 
             $sum: { 
               $toDouble: {
-                $cond: {
-                  if: { $isNumber: "$charge" },
-                  then: "$charge",
-                  else: { $toDouble: "$charge" }
+                $convert: {
+                  input: "$charge",
+                  to: "double",
+                  onError: 0, // If conversion fails, use 0
+                  onNull: 0    // If value is null, use 0
                 }
               }
             } 
@@ -113,15 +80,15 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
           totalBookings: { $sum: 1 },
           averageCharge: { 
             $avg: { 
-              $toDouble: {
-                $cond: {
-                  if: { $isNumber: "$charge" },
-                  then: "$charge",
-                  else: { $toDouble: "$charge" }
-                }
+              $convert: {
+                input: "$charge",
+                to: "double",
+                onError: 0,
+                onNull: 0
               }
             } 
           },
+          rawCharges: { $push: "$charge" }, // Store raw values for debugging
           bookings: { $push: { 
             id: "$_id",
             charge: "$charge",
@@ -137,7 +104,7 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
 
     let monthlyData = await Booking.aggregate(pipeline);
 
-    console.log('Monthly aggregated data:', monthlyData);
+    console.log('Monthly aggregated data:', JSON.stringify(monthlyData, null, 2));
 
     // Format response with all months
     const months = [
@@ -145,14 +112,9 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
-    // Initialize all months with zero values
     const formattedData = months.map((month, index) => {
       const monthNum = index + 1;
       const monthData = monthlyData.find(d => d._id?.month === monthNum);
-      
-      // Get actual bookings for this month from the database (for detailed view)
-      const monthStart = new Date(year, monthNum - 1, 1);
-      const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
       
       return {
         month: month,
@@ -162,8 +124,7 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
         totalBookings: monthData?.totalBookings || 0,
         averageCharge: monthData?.averageCharge || 0,
         hasData: !!monthData,
-        // Include sample bookings if available
-        sampleBookings: monthData?.bookings?.slice(0, 5) || []
+        sampleCharges: monthData?.rawCharges?.slice(0, 5) || [] // Show sample charges for debugging
       };
     });
 
@@ -183,11 +144,7 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
         year: parseInt(year),
         months: formattedData,
         summary: totals,
-        currency: 'SAR',
-        debug: {
-          totalBookingsInDB: allBookings.length,
-          queryUsed: matchQuery
-        }
+        currency: 'INR'
       }
     });
 
@@ -200,7 +157,6 @@ router.get('/earnings/monthly', authenticateToken,authorizeAdmin, async (req, re
     });
   }
 });
-
 
 
 
