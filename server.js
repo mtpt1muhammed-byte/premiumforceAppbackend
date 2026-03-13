@@ -64,6 +64,8 @@ const categoryRoutes = require('./routes/categoryRoutes');
 
 const modelRoutes = require('./routes/modelRoutes');
 const terminalRoutes = require('./routes/terminalRoutes');
+const routeRoutes = require('./routes/routeRoutes');
+
 
 dotenv.config();
 
@@ -164,6 +166,8 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/admin', assignDriverCar);
 
 
+
+app.use('/api/routes', routeRoutes);
 
 app.use('/api/users/admin', adminRoutes);
 

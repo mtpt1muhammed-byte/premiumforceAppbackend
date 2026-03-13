@@ -11,6 +11,15 @@ const airportSchema = new mongoose.Schema({
     required: [true, 'Airport name is required'],
     trim: true
   },
+  lat: {
+    type: Number,
+    required: false
+  },
+  long: {
+    type: Number,
+    required: false
+  },
+ 
   image: {
     type: {
       key: String,

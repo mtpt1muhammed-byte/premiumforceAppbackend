@@ -6,6 +6,9 @@ const City = require('../models/city_model');
 const { authenticateToken, authorizeAdmin } = require('../middleware/adminmiddleware');
 const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 
+
+
+
 // ============= CREATE AIRPORT =============
 // POST /api/airports - Create a new airport (image optional)
 router.post('/', 
@@ -17,7 +20,7 @@ router.post('/',
       console.log('Create airport - Body:', req.body);
       console.log('Create airport - File:', req.file);
 
-      const { cityID, airportName, isActive } = req.body;
+      const { cityID, airportName, isActive, lat, long } = req.body;
 
       // Validation
       if (!cityID) {
@@ -69,12 +72,21 @@ router.post('/',
         });
       }
 
-      // Prepare airport data
+      // Prepare airport data - FIX: Include lat and long
       const airportData = {
         cityID: cityID,
         airportName: String(airportName).trim(),
         isActive: isActive === 'true' || isActive === true || isActive === undefined
       };
+
+      // Add lat and long if provided
+      if (lat !== undefined && lat !== null && lat !== '') {
+        airportData.lat = Number(lat);
+      }
+      
+      if (long !== undefined && long !== null && long !== '') {
+        airportData.long = Number(long);
+      }
 
       // Add image if uploaded
       if (req.file) {
@@ -127,119 +139,7 @@ router.post('/',
     }
 });
 
-// ============= GET ALL AIRPORTS with Pagination =============
-// GET /api/airports - Get all airports with filtering and pagination
-router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
-  try {
-    const { 
-      cityID,
-      search,
-      isActive,
-      page = 1,
-      limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = req.query;
 
-    // Build query
-    const query = {};
-
-    if (cityID) {
-      if (!mongoose.Types.ObjectId.isValid(cityID)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid city ID format'
-        });
-      }
-      query.cityID = cityID;
-    }
-
-    if (search) {
-      query.airportName = { $regex: search, $options: 'i' };
-    }
-
-    if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
-    }
-
-    // Pagination
-    const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 10;
-    const skip = (pageNum - 1) * limitNum;
-
-    // Sort
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
-    // Get airports with populated city data
-    const airports = await Airport.find(query)
-      .populate('cityID', 'cityName isActive')
-      .sort(sort)
-      .skip(skip)
-      .limit(limitNum);
-
-    // Get total count
-    const total = await Airport.countDocuments(query);
-
-    res.json({
-      success: true,
-      message: 'Airports fetched successfully',
-      data: airports,
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalItems: total,
-        itemsPerPage: limitNum,
-        hasNextPage: pageNum < Math.ceil(total / limitNum),
-        hasPrevPage: pageNum > 1
-      }
-    });
-  } catch (error) {
-    console.error('Get airports error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching airports',
-      error: error.message
-    });
-  }
-});
-
-// ============= GET AIRPORT BY ID =============
-// GET /api/airports/:id - Get single airport
-router.get('/:id', authenticateToken, authorizeAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid airport ID format'
-      });
-    }
-
-    const airport = await Airport.findById(id)
-      .populate('cityID', 'cityName isActive');
-
-    if (!airport) {
-      return res.status(404).json({
-        success: false,
-        message: 'Airport not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: airport
-    });
-  } catch (error) {
-    console.error('Get airport error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching airport',
-      error: error.message
-    });
-  }
-});
 
 // ============= UPDATE AIRPORT =============
 // PUT /api/airports/:id - Update airport (image optional)
@@ -254,7 +154,7 @@ router.put('/:id',
       console.log('Request file:', req.file);
 
       const { id } = req.params;
-      const { cityID, airportName, isActive } = req.body;
+      const { cityID, airportName, isActive, lat, long } = req.body;
 
       // Validate ID
       if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -312,12 +212,22 @@ router.put('/:id',
         }
       }
 
-      // Prepare update data
+      // Prepare update data - FIX: Include lat and long
       const updateData = {
         cityID: cityID || existingAirport.cityID,
         airportName: airportName ? String(airportName).trim() : existingAirport.airportName,
         isActive: isActive !== undefined ? isActive === 'true' || isActive === true : existingAirport.isActive
       };
+
+      // Add lat if provided
+      if (lat !== undefined && lat !== null && lat !== '') {
+        updateData.lat = Number(lat);
+      }
+      
+      // Add long if provided
+      if (long !== undefined && long !== null && long !== '') {
+        updateData.long = Number(long);
+      }
 
       // Handle image update
       if (req.file) {
@@ -344,7 +254,7 @@ router.put('/:id',
         id,
         updateData,
         { new: true, runValidators: true }
-      ).populate('cityID', 'cityName isActive');
+      ).populate('cityID', 'cityName isActive'); // FIX: Remove extra parameters
 
       res.status(200).json({
         success: true,
@@ -379,6 +289,125 @@ router.put('/:id',
       });
     }
 });
+
+
+
+// ============= GET ALL AIRPORTS with Pagination =============
+// GET /api/airports - Get all airports with filtering and pagination
+router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const { 
+      cityID,
+      search,
+      isActive,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build query
+    const query = {};
+
+    if (cityID) {
+      if (!mongoose.Types.ObjectId.isValid(cityID)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid city ID format'
+        });
+      }
+      query.cityID = cityID;
+    }
+
+    if (search) {
+      query.airportName = { $regex: search, $options: 'i' };
+    }
+
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Pagination
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    // Sort
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    // FIX: Correct populate syntax - use string with space-separated fields
+    const airports = await Airport.find(query)
+      .populate('cityID', 'cityName isActive lat long')  // Fixed: space-separated fields in a single string
+      .sort(sort)
+      .skip(skip)
+      .limit(limitNum);
+
+    // Get total count
+    const total = await Airport.countDocuments(query);
+
+    res.json({
+      success: true,
+      message: 'Airports fetched successfully',
+      data: airports,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        totalItems: total,
+        itemsPerPage: limitNum,
+        hasNextPage: pageNum < Math.ceil(total / limitNum),
+        hasPrevPage: pageNum > 1
+      }
+    });
+  } catch (error) {
+    console.error('Get airports error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching airports',
+      error: error.message
+    });
+  }
+});
+
+// ============= GET AIRPORT BY ID =============
+// GET /api/airports/:id - Get single airport
+router.get('/:id', authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid airport ID format'
+      });
+    }
+
+    // FIX: Use a single string with space-separated fields
+    const airport = await Airport.findById(id)
+      .populate('cityID', 'cityName isActive lat long');  // Fixed: space-separated fields in one string
+
+    if (!airport) {
+      return res.status(404).json({
+        success: false,
+        message: 'Airport not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: airport
+    });
+  } catch (error) {
+    console.error('Get airport error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching airport',
+      error: error.message
+    });
+  }
+});
+
+
 
 // ============= UPDATE AIRPORT STATUS ONLY =============
 // PATCH /api/airports/:id/status - Update only status
@@ -607,5 +636,8 @@ router.get('/city/:cityId', authenticateToken, authorizeAdmin, async (req, res) 
     });
   }
 });
+
+
+
 
 module.exports = router;
