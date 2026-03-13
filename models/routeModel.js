@@ -1,6 +1,13 @@
 const mongoose = require('mongoose');
 
 const routeSchema = new mongoose.Schema({
+
+
+  vehicleID: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Car',
+    required: [true, 'Vehicle is required']
+  },
   fromCity: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'City',
@@ -25,6 +32,7 @@ const routeSchema = new mongoose.Schema({
 });
 
 // Remove the pre-save hook and just keep the unique index
-routeSchema.index({ fromCity: 1, toCity: 1 }, { unique: true });
+routeSchema.index({ vehicleID: 1, fromCity: 1, toCity: 1 }, { unique: true });
+
 
 module.exports = mongoose.model('Route', routeSchema);

@@ -294,7 +294,7 @@ router.put('/:id',
 
 // ============= GET ALL AIRPORTS with Pagination =============
 // GET /api/airports - Get all airports with filtering and pagination
-router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
       cityID,
@@ -368,6 +368,9 @@ router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
     });
   }
 });
+
+
+
 
 // ============= GET AIRPORT BY ID =============
 // GET /api/airports/:id - Get single airport

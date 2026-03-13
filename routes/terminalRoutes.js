@@ -81,7 +81,7 @@ router.post('/',
 });
 
 // ============= GET ALL TERMINALS with Pagination =============
-router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
       airportID, search, isActive,

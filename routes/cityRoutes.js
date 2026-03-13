@@ -104,9 +104,11 @@ router.post('/',
     }
 });
 
+
+
 // ============= GET ALL CITIES with Pagination =============
 // GET /api/cities - Get all cities with filtering and pagination
-router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
       search,
