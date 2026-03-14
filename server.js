@@ -195,6 +195,10 @@ const brandRoutes = require('./routes/brandRoutes');
 app.use('/api/brands', brandRoutes);
 
 
+const reviewRoutes = require('./routes/reviewRoutes');
+app.use('/api/reviews', reviewRoutes);
+
+
 app.use('/api/cities', CityRoutes);
 
 

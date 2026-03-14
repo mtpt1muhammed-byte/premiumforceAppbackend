@@ -20,11 +20,6 @@ const bannerSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
-  categoryName: {
-    type: String,
-    required: true,
-    trim: true
-  },
   description: {
     type: String,
     trim: true
@@ -67,7 +62,7 @@ const bannerSchema = new mongoose.Schema({
 });
 
 // Index for better query performance
-bannerSchema.index({ isActive: 1, categoryName: 1, priority: -1 });
+bannerSchema.index({ isActive: 1, priority: -1 });
 bannerSchema.index({ startDate: 1, endDate: 1 });
 
 // Method to get public banner data

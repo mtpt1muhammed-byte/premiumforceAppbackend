@@ -280,6 +280,7 @@ router.post('/verify-otp', async (req, res) => {
 
 
 
+
 // Mark booking as completed by driver
 router.post('/complete-booking/tracking', authenticateDriver, async (req, res) => {
   try {
@@ -386,8 +387,6 @@ router.post('/complete-booking/tracking', authenticateDriver, async (req, res) =
     });
   }
 });
-
-
 
 
 

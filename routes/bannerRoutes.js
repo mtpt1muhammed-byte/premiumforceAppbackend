@@ -8,8 +8,6 @@ const {   authenticateToken,
   authorizeAdmin,
   authorizeRoles,
   authorizeAny,
-  // New refresh token functions
- 
  } = require('../middleware/adminmiddleware');
 
 // ============= HELPER FUNCTIONS =============
@@ -37,200 +35,6 @@ const cleanupUploadedFiles = async (files) => {
   await Promise.all(deletePromises);
 };
 
-
-
-
-
-
-
-
-
-// ============= UPDATE BANNER =============
-// PUT /api/banners/:id - Update banner
-// ============= UPDATE BANNER =============
-// PUT /api/banners/:id - Update banner
-router.put('/:id', 
-  authenticateToken, 
-  authorizeAdmin,
-  upload.fields([{ name: 'image', maxCount: 1 }]), 
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { 
-        name, 
-        categoryName, 
-        isActive,
-        description,
-        link,
-        priority,
-        startDate,
-        endDate
-      } = req.body;
-
-      console.log('Update banner - ID:', id);
-      console.log('Update banner - Body:', req.body);
-      console.log('Update banner - Files:', req.files);
-
-      // Validate ID
-      if (!mongoose.Types.ObjectId.isValid(id)) {
-        await cleanupUploadedFiles(req.files);
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid banner ID format'
-        });
-      }
-
-      // FIND BY ID - THIS IS THE CORRECT WAY
-      const banner = await Banner.findById(id);
-      
-      if (!banner) {
-        await cleanupUploadedFiles(req.files);
-        return res.status(404).json({
-          success: false,
-          message: 'Banner not found'
-        });
-      }
-
-      // CHECK IF BANNER NAME ALREADY EXISTS (if name is being changed)
-      if (name && name.toLowerCase() !== banner.name.toLowerCase()) {
-        const existingBannerByName = await Banner.findOne({ 
-          name: { $regex: new RegExp(`^${name}$`, 'i') },
-          _id: { $ne: id } // Exclude current banner
-        });
-        
-        if (existingBannerByName) {
-          await cleanupUploadedFiles(req.files);
-          return res.status(400).json({
-            success: false,
-            message: 'Banner with this name already exists',
-            field: 'name'
-          });
-        }
-      }
-
-      // CHECK IF CATEGORY+NAME COMBINATION ALREADY EXISTS
-      if (name || categoryName) {
-        const searchName = name || banner.name;
-        const searchCategory = categoryName || banner.categoryName;
-        
-        const existingBannerByCombo = await Banner.findOne({ 
-          name: { $regex: new RegExp(`^${searchName}$`, 'i') },
-          categoryName: { $regex: new RegExp(`^${searchCategory}$`, 'i') },
-          _id: { $ne: id } // Exclude current banner
-        });
-        
-        if (existingBannerByCombo) {
-          await cleanupUploadedFiles(req.files);
-          return res.status(400).json({
-            success: false,
-            message: 'Banner with this name already exists in this category',
-            field: 'categoryName'
-          });
-        }
-      }
-
-      // Prepare update data
-      const updateData = {
-        updatedBy: req.user.userId
-      };
-
-      // Add fields to update if provided
-      if (name) updateData.name = name;
-      if (categoryName) updateData.categoryName = categoryName;
-      if (isActive !== undefined) updateData.isActive = isActive === 'true' || isActive === true;
-      if (description !== undefined) updateData.description = description || undefined;
-      if (link !== undefined) updateData.link = link || undefined;
-      if (priority !== undefined) updateData.priority = parseInt(priority);
-      if (startDate) updateData.startDate = new Date(startDate);
-      if (endDate) updateData.endDate = new Date(endDate);
-      
-      // Handle image upload - THIS IS WHERE S3 UPLOAD HAPPENS
-      if (req.files && req.files.image && req.files.image[0]) {
-        console.log('New image uploaded:', req.files.image[0]);
-        
-        // Delete old image from S3 if exists
-        if (banner.image && banner.image.key) {
-          console.log('Deleting old image:', banner.image.key);
-          await deleteFromS3(banner.image.key).catch(err => 
-            console.error('Error deleting old image:', err)
-          );
-        }
-        
-        // Add new image data - this uses the S3 URL from your config
-        updateData.image = formatFileData(req.files.image[0]);
-        console.log('New image data:', updateData.image);
-      }
-
-      console.log('Update data:', updateData);
-
-      // Update banner
-      const updatedBanner = await Banner.findByIdAndUpdate(
-        id,
-        { $set: updateData },
-        { new: true, runValidators: true }
-      );
-
-      if (!updatedBanner) {
-        return res.status(404).json({
-          success: false,
-          message: 'Banner not found after update'
-        });
-      }
-
-      res.status(200).json({
-        success: true,
-        message: updateData.image ? 'Banner updated successfully with new image' : 'Banner updated successfully',
-        data: updatedBanner.getPublicBanner()
-      });
-
-    } catch (error) {
-      // Delete newly uploaded files if error occurs
-      await cleanupUploadedFiles(req.files);
-
-      console.error('Update banner error:', error);
-
-      // Handle duplicate key error
-      if (error.code === 11000) {
-        const field = Object.keys(error.keyPattern)[0];
-        return res.status(400).json({
-          success: false,
-          message: `Banner with this ${field} already exists`,
-          field: field
-        });
-      }
-
-      if (error.name === 'CastError') {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid banner ID format'
-        });
-      }
-
-      if (error.name === 'ValidationError') {
-        const errors = {};
-        for (let field in error.errors) {
-          errors[field] = error.errors[field].message;
-        }
-        return res.status(400).json({
-          success: false,
-          message: 'Validation error',
-          errors: errors
-        });
-      }
-
-      res.status(500).json({
-        success: false,
-        message: 'Error updating banner',
-        error: error.message
-      });
-    }
-  }
-);
-
-
-
-// ============= CREATE BANNER =============
-// POST /api/banners - Create a new banner (image optional)
 // ============= CREATE BANNER =============
 // POST /api/banners - Create a new banner (image optional)
 router.post('/', 
@@ -241,7 +45,6 @@ router.post('/',
     try {
       const { 
         name, 
-        categoryName, 
         isActive = true,
         description,
         link,
@@ -253,18 +56,18 @@ router.post('/',
       console.log('Create banner - Body:', req.body);
       console.log('Create banner - Files:', req.files);
 
-      // Validate required fields
-      if (!name || !categoryName) {
+      // Validate required fields - removed categoryName
+      if (!name) {
         await cleanupUploadedFiles(req.files);
         return res.status(400).json({
           success: false,
-          message: 'Please provide name and categoryName'
+          message: 'Please provide name'
         });
       }
 
       // CHECK IF BANNER NAME ALREADY EXISTS (Case insensitive)
       const existingBannerByName = await Banner.findOne({ 
-        name: name 
+        name: { $regex: new RegExp(`^${name}$`, 'i') }
       });
       
       if (existingBannerByName) {
@@ -279,7 +82,6 @@ router.post('/',
       // Prepare banner data
       const bannerData = {
         name,
-        categoryName,
         isActive: isActive === 'true' || isActive === true,
         description: description || undefined,
         link: link || undefined,
@@ -356,13 +158,168 @@ router.post('/',
   }
 );
 
+// ============= UPDATE BANNER =============
+// PUT /api/banners/:id - Update banner
+router.put('/:id', 
+  authenticateToken, 
+  authorizeAdmin,
+  upload.fields([{ name: 'image', maxCount: 1 }]), 
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { 
+        name, 
+        isActive,
+        description,
+        link,
+        priority,
+        startDate,
+        endDate
+      } = req.body;
+
+      console.log('Update banner - ID:', id);
+      console.log('Update banner - Body:', req.body);
+      console.log('Update banner - Files:', req.files);
+
+      // Validate ID
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        await cleanupUploadedFiles(req.files);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid banner ID format'
+        });
+      }
+
+      // FIND BY ID
+      const banner = await Banner.findById(id);
+      
+      if (!banner) {
+        await cleanupUploadedFiles(req.files);
+        return res.status(404).json({
+          success: false,
+          message: 'Banner not found'
+        });
+      }
+
+      // CHECK IF BANNER NAME ALREADY EXISTS (if name is being changed)
+      if (name && name.toLowerCase() !== banner.name.toLowerCase()) {
+        const existingBannerByName = await Banner.findOne({ 
+          name: { $regex: new RegExp(`^${name}$`, 'i') },
+          _id: { $ne: id } // Exclude current banner
+        });
+        
+        if (existingBannerByName) {
+          await cleanupUploadedFiles(req.files);
+          return res.status(400).json({
+            success: false,
+            message: 'Banner with this name already exists',
+            field: 'name'
+          });
+        }
+      }
+
+      // Prepare update data
+      const updateData = {
+        updatedBy: req.user.userId
+      };
+
+      // Add fields to update if provided
+      if (name) updateData.name = name;
+      if (isActive !== undefined) updateData.isActive = isActive === 'true' || isActive === true;
+      if (description !== undefined) updateData.description = description || undefined;
+      if (link !== undefined) updateData.link = link || undefined;
+      if (priority !== undefined) updateData.priority = parseInt(priority);
+      if (startDate) updateData.startDate = new Date(startDate);
+      if (endDate) updateData.endDate = new Date(endDate);
+      
+      // Handle image upload
+      if (req.files && req.files.image && req.files.image[0]) {
+        console.log('New image uploaded:', req.files.image[0]);
+        
+        // Delete old image from S3 if exists
+        if (banner.image && banner.image.key) {
+          console.log('Deleting old image:', banner.image.key);
+          await deleteFromS3(banner.image.key).catch(err => 
+            console.error('Error deleting old image:', err)
+          );
+        }
+        
+        // Add new image data
+        updateData.image = formatFileData(req.files.image[0]);
+        console.log('New image data:', updateData.image);
+      }
+
+      console.log('Update data:', updateData);
+
+      // Update banner
+      const updatedBanner = await Banner.findByIdAndUpdate(
+        id,
+        { $set: updateData },
+        { new: true, runValidators: true }
+      );
+
+      if (!updatedBanner) {
+        return res.status(404).json({
+          success: false,
+          message: 'Banner not found after update'
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        message: updateData.image ? 'Banner updated successfully with new image' : 'Banner updated successfully',
+        data: updatedBanner.getPublicBanner()
+      });
+
+    } catch (error) {
+      // Delete newly uploaded files if error occurs
+      await cleanupUploadedFiles(req.files);
+
+      console.error('Update banner error:', error);
+
+      // Handle duplicate key error
+      if (error.code === 11000) {
+        const field = Object.keys(error.keyPattern)[0];
+        return res.status(400).json({
+          success: false,
+          message: `Banner with this ${field} already exists`,
+          field: field
+        });
+      }
+
+      if (error.name === 'CastError') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid banner ID format'
+        });
+      }
+
+      if (error.name === 'ValidationError') {
+        const errors = {};
+        for (let field in error.errors) {
+          errors[field] = error.errors[field].message;
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: errors
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Error updating banner',
+        error: error.message
+      });
+    }
+  }
+);
+
 // ============= GET ALL BANNERS =============
 // GET /api/banners - Get all banners with filtering
-router.get('/',  authenticateToken, 
-  authorizeAdmin, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
-      categoryName, 
       isActive, 
       search,
       sort = '-priority',
@@ -370,12 +327,8 @@ router.get('/',  authenticateToken,
       limit = 10 
     } = req.query;
 
-    // Build query
+    // Build query - removed categoryName
     const query = {};
-    
-    if (categoryName) {
-      query.categoryName = categoryName;
-    }
     
     if (isActive !== undefined) {
       query.isActive = isActive === 'true';
@@ -384,7 +337,6 @@ router.get('/',  authenticateToken,
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
-        { categoryName: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
     }
@@ -409,18 +361,12 @@ router.get('/',  authenticateToken,
     
     const total = await Banner.countDocuments(query);
 
-    // Get unique categories for filter
-    const categories = await Banner.distinct('categoryName');
-
     res.status(200).json({
       success: true,
       count: banners.length,
       total,
       page: parseInt(page),
       pages: Math.ceil(total / parseInt(limit)),
-      filters: {
-        categories
-      },
       data: banners.map(banner => banner.getPublicBanner())
     });
 
@@ -439,7 +385,7 @@ router.get('/',  authenticateToken,
 router.get('/active',  authenticateToken, 
   authorizeAdmin, async (req, res) => {
   try {
-    const { categoryName, limit = 20 } = req.query;
+    const { limit = 20 } = req.query; // removed categoryName
 
     const query = { 
       isActive: true,
@@ -448,10 +394,6 @@ router.get('/active',  authenticateToken,
         { $or: [{ endDate: { $gte: new Date() } }, { endDate: { $exists: false } }] }
       ]
     };
-
-    if (categoryName) {
-      query.categoryName = categoryName;
-    }
 
     const banners = await Banner.find(query)
       .sort({ priority: -1, createdAt: -1 })
@@ -516,8 +458,6 @@ router.get('/:id',  authenticateToken,
     });
   }
 });
-
-
 
 // ============= UPDATE BANNER STATUS =============
 // PATCH /api/banners/:id/status - Update only banner status
@@ -798,3 +738,4 @@ router.patch('/bulk/status',
 );
 
 module.exports = router;
+

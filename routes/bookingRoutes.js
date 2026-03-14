@@ -25,6 +25,96 @@ const { notifyUser, notifyUsers } = require('../fcm');
 
 
 
+
+// ============= GET BOOKING STATUS COUNTS FOR CURRENT MONTH =============
+// GET /api/bookings/status-counts - Get counts for completed, pending, start_pickup, cancelled
+router.get('/status-counts',async (req, res) => {
+  try {
+    // Get current date
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth(); // 0-11 (January is 0)
+    
+    // Create start and end dates for current month
+    const startOfMonth = new Date(currentYear, currentMonth, 1);
+    const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
+    
+    console.log('Start of month:', startOfMonth);
+    console.log('End of month:', endOfMonth);
+
+    // Get counts for all 4 statuses in one query using aggregation
+    const results = await Booking.aggregate([
+      {
+        $match: {
+          createdAt: { 
+            $gte: startOfMonth, 
+            $lte: endOfMonth 
+          },
+          bookingStatus: { 
+            $in: ['completed', 'pending', 'start_pickup', 'cancelled'] 
+          }
+        }
+      },
+      {
+        $group: {
+          _id: '$bookingStatus',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Initialize counts object with all statuses set to 0
+    const counts = {
+      completed: 0,
+      pending: 0,
+      start_pickup: 0,
+      cancelled: 0,
+      total: 0
+    };
+
+    // Fill in the actual counts
+    results.forEach(item => {
+      if (counts.hasOwnProperty(item._id)) {
+        counts[item._id] = item.count;
+        counts.total += item.count;
+      }
+    });
+
+    // Get month name
+    const monthName = now.toLocaleString('default', { month: 'long' });
+
+    res.status(200).json({
+      success: true,
+      message: 'Booking status counts fetched successfully',
+      data: {
+        month: monthName,
+        year: currentYear,
+        dateRange: {
+          from: startOfMonth,
+          to: endOfMonth
+        },
+        counts: counts,
+        summary: `Total ${counts.total} bookings in ${monthName} ${currentYear}`
+      }
+    });
+
+  } catch (error) {
+    console.error('Get status counts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching booking status counts',
+      error: error.message
+    });
+  }
+});
+
+
+
+
+
+
+
+
 // ============= GET MONTHLY EARNINGS =============
 // GET /api/bookings/earnings/monthly - Get monthly earnings (Admin/Driver)
 router.get('/earnings/monthly', authenticateToken, async (req, res) => {
