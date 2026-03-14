@@ -199,6 +199,10 @@ const reviewRoutes = require('./routes/reviewRoutes');
 app.use('/api/reviews', reviewRoutes);
 
 
+const specialIDRoutes = require('./routes/specialIDRoutes');
+app.use('/api/special-content', specialIDRoutes);
+
+
 app.use('/api/cities', CityRoutes);
 
 

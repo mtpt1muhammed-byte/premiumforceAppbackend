@@ -415,6 +415,7 @@ router.get('/active',  authenticateToken,
   }
 });
 
+
 // ============= GET BANNER BY ID =============
 // GET /api/banners/:id - Get single banner
 router.get('/:id',  authenticateToken, 
