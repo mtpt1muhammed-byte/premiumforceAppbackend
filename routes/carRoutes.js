@@ -188,148 +188,6 @@ if (!vat) missingFields.push('vat');
 });
 
 
-// ============= GET ALL CARS =============
-// GET /api/cars - Get all cars with filtering and search
-router.get('/', async (req, res) => {
-  try {
-    const { 
-      search,
-      brand,
-      category,
-      minPassengers,
-      maxPassengers,
-      page = 1,
-      limit = 10,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    const query = {};
-
-    // Search functionality
-    if (search) {
-      query.$text = { $search: search };
-    }
-
-    // Filter by brand
-    if (brand) {
-      query.brand = brand;
-    }
-
-    // Filter by category
-    if (category) {
-      query.category = { $regex: new RegExp(category, 'i') };
-    }
-
-    // Filter by number of passengers
-    if (minPassengers || maxPassengers) {
-      query.numberOfPassengers = {};
-      if (minPassengers) query.numberOfPassengers.$gte = parseInt(minPassengers);
-      if (maxPassengers) query.numberOfPassengers.$lte = parseInt(maxPassengers);
-    }
-
-    // Build sort object
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
-    const cars = await Car.find(query)
-      .populate('createdBy', 'username email')
-      .sort(sort)
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
-
-    const total = await Car.countDocuments(query);
-
-    // Get unique brands and categories for filter
-    const [brands, categories] = await Promise.all([
-      Car.distinct('brand'),
-      Car.distinct('category')
-    ]);
-
-    res.json({
-      success: true,
-      count: cars.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      filters: {
-        availableBrands: brands,
-        availableCategories: categories
-      },
-      data: cars
-    });
-  } catch (error) {
-    console.error('Get cars error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching cars',
-      error: error.message
-    });
-  }
-});
-
-// ============= GET CAR BY ID =============
-// GET /api/cars/:id - Get single car by MongoDB _id
-router.get('/:id', async (req, res) => {
-  try {
-    const car = await Car.findById(req.params.id)
-      .populate('createdBy', 'username email');
-
-    if (!car) {
-      return res.status(404).json({
-        success: false,
-        message: 'Car not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: car
-    });
-  } catch (error) {
-    console.error('Get car error:', error);
-    if (error.name === 'CastError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid car ID format'
-      });
-    }
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching car',
-      error: error.message
-    });
-  }
-});
-
-
-// ============= GET CAR BY CAR ID =============
-// GET /api/cars/carid/:carId - Get single car by custom carId
-router.get('/carid/:carId', authMiddleware, async (req, res) => {
-  try {
-    const car = await Car.findOne({ carId: req.params.carId })
-      .populate('createdBy', 'username email');
-
-    if (!car) {
-      return res.status(404).json({
-        success: false,
-        message: 'Car not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: car
-    });
-  } catch (error) {
-    console.error('Get car by carId error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching car',
-      error: error.message
-    });
-  }
-});
 
 // ============= UPDATE CAR =============
 // PUT /api/cars/:id - Update car details
@@ -341,7 +199,7 @@ router.put('/:id',
     try {
       const { id } = req.params;
       const {
-        carName, brand, model, Category, numberOfPassengers, minCharge, minimumChargeDistance,
+        carName, brand, model, category, numberOfPassengers, minCharge, minimumChargeDistance,
         vat
       } = req.body;
 
@@ -501,6 +359,151 @@ if (vat) car.vat = String(vat).trim();
       });
     }
 });
+
+// ============= GET ALL CARS =============
+// GET /api/cars - Get all cars with filtering and search
+router.get('/', async (req, res) => {
+  try {
+    const { 
+      search,
+      brand,
+      category,
+      minPassengers,
+      maxPassengers,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    const query = {};
+
+    // Search functionality
+    if (search) {
+      query.$text = { $search: search };
+    }
+
+    // Filter by brand
+    if (brand) {
+      query.brand = brand;
+    }
+
+    // Filter by category
+    if (category) {
+      query.category = { $regex: new RegExp(category, 'i') };
+    }
+
+    // Filter by number of passengers
+    if (minPassengers || maxPassengers) {
+      query.numberOfPassengers = {};
+      if (minPassengers) query.numberOfPassengers.$gte = parseInt(minPassengers);
+      if (maxPassengers) query.numberOfPassengers.$lte = parseInt(maxPassengers);
+    }
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const cars = await Car.find(query)
+      .populate('createdBy', 'username email')
+      .sort(sort)
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit));
+
+    const total = await Car.countDocuments(query);
+
+    // Get unique brands and categories for filter
+    const [brands, categories] = await Promise.all([
+      Car.distinct('brand'),
+      Car.distinct('category')
+    ]);
+
+    res.json({
+      success: true,
+      count: cars.length,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / parseInt(limit)),
+      filters: {
+        availableBrands: brands,
+        availableCategories: categories
+      },
+      data: cars
+    });
+  } catch (error) {
+    console.error('Get cars error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching cars',
+      error: error.message
+    });
+  }
+});
+
+// ============= GET CAR BY ID =============
+// GET /api/cars/:id - Get single car by MongoDB _id
+router.get('/:id', async (req, res) => {
+  try {
+    const car = await Car.findById(req.params.id)
+      .populate('createdBy', 'username email');
+
+    if (!car) {
+      return res.status(404).json({
+        success: false,
+        message: 'Car not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: car
+    });
+  } catch (error) {
+    console.error('Get car error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid car ID format'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching car',
+      error: error.message
+    });
+  }
+});
+
+
+// ============= GET CAR BY CAR ID =============
+// GET /api/cars/carid/:carId - Get single car by custom carId
+router.get('/carid/:carId', authMiddleware, async (req, res) => {
+  try {
+    const car = await Car.findOne({ carId: req.params.carId })
+      .populate('createdBy', 'username email');
+
+    if (!car) {
+      return res.status(404).json({
+        success: false,
+        message: 'Car not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: car
+    });
+  } catch (error) {
+    console.error('Get car by carId error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching car',
+      error: error.message
+    });
+  }
+});
+
+
 
 // PATCH /api/cars/:id/min-charge - Update only the minimum charge
 router.patch('/:id/min-charge', authMiddleware, async (req, res) => {
