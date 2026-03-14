@@ -395,7 +395,7 @@ router.post('/complete-booking', authenticateDriver, async (req, res) => {
  * @desc    Get all drivers with pagination (Admin only)
  * @access  Private (Admin)
  */
-router.get('/all', authenticateToken, authorizeAdmin, async (req, res) => {
+router.get('/all', async (req, res) => {
   console.log('🔥🔥🔥 /all ROUTE IS EXECUTING! 🔥🔥🔥');
   
   try {
@@ -512,7 +512,7 @@ router.get('/stats', authenticateToken, authorizeAdmin, async (req, res) => {
  * @desc    Get driver by ID (Admin only)
  * @access  Private (Admin)
  */
-router.get('/:id', authenticateToken, authorizeAdmin, async (req, res) => {
+router.get('/:id', async (req, res) => {
   console.log('🔍 Getting driver by ID:', req.params.id);
   
   try {

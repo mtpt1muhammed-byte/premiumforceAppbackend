@@ -185,7 +185,7 @@ router.post('/',
 
 // ============= GET ALL CARS =============
 // GET /api/cars - Get all cars with filtering and search
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
       search,
@@ -265,7 +265,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // ============= GET CAR BY ID =============
 // GET /api/cars/:id - Get single car by MongoDB _id
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const car = await Car.findById(req.params.id)
       .populate('createdBy', 'username email');
