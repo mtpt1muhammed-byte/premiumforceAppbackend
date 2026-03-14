@@ -71,7 +71,7 @@ router.post('/',
       if (!minimumChargeDistance) missingFields.push('minimumChargeDistance');
       if (!minCharge) missingFields.push('minCharge');
       if (!finalCategory) missingFields.push('category');
-if (!vat) missingFields.push('vat');
+      if (!vat) missingFields.push('vat');
 
       if (missingFields.length > 0) {
         if (req.file) {
@@ -113,7 +113,7 @@ if (!vat) missingFields.push('vat');
             carName: existingCar.carName,
             brand: existingCar.brand,
             model: existingCar.model,
-            category: existingCar.Category,
+            category: existingCar.category,
             numberOfPassengers: existingCar.numberOfPassengers,
             minCharge: existingCar.minCharge,
             minimumChargeDistance: existingCar.minimumChargeDistance,
@@ -186,6 +186,7 @@ if (!vat) missingFields.push('vat');
       });
     }
 });
+
 
 
 
