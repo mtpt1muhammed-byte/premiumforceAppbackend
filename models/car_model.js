@@ -20,8 +20,15 @@ const carSchema = new mongoose.Schema({
     trim: true,
     maxlength: [50, 'Brand cannot exceed 50 characters']
   },
+  vat: {
+    type: Number,
+    required: [true, 'VAT is required'],
+    trim: true,
+    minLength: [0, 'VAT cannot be negative'],
+    maxlength: [50, 'VAT cannot exceed 50 characters']
+  },
   minCharge: {
-    type: String,
+    type: Number,
     required: [true, 'Minimum charge is required'],
     trim: true,
     maxlength: [100, 'Minimum charge cannot exceed 100 characters']

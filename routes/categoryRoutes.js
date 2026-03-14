@@ -145,8 +145,7 @@ router.post('/',
 
 // ============= GET ALL CATEGORIES =============
 // GET /api/categories - Get all categories with filtering
-router.get('/',authenticateToken,
-  authorizeAdmin, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
       isActive, 

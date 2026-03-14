@@ -80,7 +80,7 @@ router.post('/', authenticateToken, authorizeAdmin, upload.single('brandIcon'), 
 
 // ============= GET ALL BRANDS =============
 // GET /api/brands?page=1&limit=10&isActive=true&search=bmw
-router.get('/', authenticateToken, authorizeAdmin, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { 
       isActive, 

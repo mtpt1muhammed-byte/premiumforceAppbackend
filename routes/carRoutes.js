@@ -43,7 +43,8 @@ router.post('/',
 
       const {
         carName, brand, model, numberOfPassengers,
-        minimumChargeDistance, minCharge, Category, category
+        minimumChargeDistance, minCharge, Category, category,
+        vat
       } = cleanBody;
 
       // Use either Category or category (case-insensitive)
@@ -70,6 +71,7 @@ router.post('/',
       if (!minimumChargeDistance) missingFields.push('minimumChargeDistance');
       if (!minCharge) missingFields.push('minCharge');
       if (!finalCategory) missingFields.push('category');
+if (!vat) missingFields.push('vat');
 
       if (missingFields.length > 0) {
         if (req.file) {
@@ -114,7 +116,9 @@ router.post('/',
             category: existingCar.Category,
             numberOfPassengers: existingCar.numberOfPassengers,
             minCharge: existingCar.minCharge,
-            minimumChargeDistance: existingCar.minimumChargeDistance
+            minimumChargeDistance: existingCar.minimumChargeDistance,
+            vat: existingCar.vat
+
           }
         });
       }
@@ -128,6 +132,7 @@ router.post('/',
         numberOfPassengers: passengers,
         minCharge: String(minCharge),
         minimumChargeDistance: String(minimumChargeDistance),
+        vat: String(vat),
         carImage: {
           key: req.file.key,
           url: getS3Url(req.file.key),
@@ -297,6 +302,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+
 // ============= GET CAR BY CAR ID =============
 // GET /api/cars/carid/:carId - Get single car by custom carId
 router.get('/carid/:carId', authMiddleware, async (req, res) => {
@@ -335,7 +341,8 @@ router.put('/:id',
     try {
       const { id } = req.params;
       const {
-        carName, brand, model, Category, numberOfPassengers, minCharge, minimumChargeDistance
+        carName, brand, model, Category, numberOfPassengers, minCharge, minimumChargeDistance,
+        vat
       } = req.body;
 
       // Find existing car
@@ -392,7 +399,8 @@ router.put('/:id',
               category: existingCar.category,
               numberOfPassengers: existingCar.numberOfPassengers,
               minCharge: existingCar.minCharge,
-              minimumChargeDistance: existingCar.minimumChargeDistance
+              minimumChargeDistance: existingCar.minimumChargeDistance,
+              vat: existingCar.vat
             }
           });
         }
@@ -418,7 +426,7 @@ router.put('/:id',
       if (numberOfPassengers) car.numberOfPassengers = passengers;
       if (minCharge) car.minCharge = String(minCharge).trim();
       if (minimumChargeDistance) car.minimumChargeDistance = String(minimumChargeDistance).trim();
-
+if (vat) car.vat = String(vat).trim();
       // Handle image update if new image is uploaded
       if (req.file) {
         const oldImageKey = car.carImage?.key;
