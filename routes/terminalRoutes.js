@@ -8,6 +8,101 @@ const { upload, deleteFromS3, getS3Url } = require('../config/s3config');
 
 
 
+
+
+// ============= GET TERMINALS BY AIRPORT ID =============
+// GET /api/terminals/airport/:airportId - Get terminals for a specific airport
+router.get('/terminals/:airportId', async (req, res) => {
+  try {
+    const { airportId } = req.params;
+    const { isActive, page = 1, limit = 100, sortBy = 'terminalName', sortOrder = 'asc' } = req.query;
+
+    // Validate airport ID
+    if (!mongoose.Types.ObjectId.isValid(airportId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid airport ID format' 
+      });
+    }
+
+    // Check if airport exists
+    const airport = await Airport.findById(airportId).select('airportName airportCode cityID');
+    if (!airport) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Airport not found' 
+      });
+    }
+
+    // Build query
+    const query = { airportID: airportId };
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Pagination
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 100;
+    const skip = (pageNum - 1) * limitNum;
+
+    // Sorting
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    // Get terminals
+    const terminals = await Terminal.find(query)
+      .populate({
+        path: 'airportID',
+        populate: { path: 'cityID', select: 'cityName' }
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await Terminal.countDocuments(query);
+
+    // Format response
+    res.json({
+      success: true,
+      airport: {
+        _id: airport._id,
+        name: airport.airportName,
+        code: airport.airportCode,
+        city: airport.cityID
+      },
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        totalItems: total,
+        itemsPerPage: limitNum,
+        hasNextPage: pageNum < Math.ceil(total / limitNum),
+        hasPrevPage: pageNum > 1
+      },
+      count: terminals.length,
+      data: terminals
+    });
+
+  } catch (error) {
+    console.error('Get terminals by airport error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching terminals',
+      error: error.message 
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
 // ============= CREATE TERMINAL =============
 router.post('/', 
   authenticateToken, authorizeAdmin,

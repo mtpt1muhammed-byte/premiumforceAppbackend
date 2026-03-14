@@ -574,6 +574,7 @@ router.delete('/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   }
 });
 
+
 // ============= GET AIRPORTS BY CITY ID =============
 // GET /api/airports/city/:cityId - Get all airports for a specific city
 router.get('/city/:cityId', authenticateToken, authorizeAdmin, async (req, res) => {
